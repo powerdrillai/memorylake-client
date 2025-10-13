@@ -1,8 +1,0 @@
-include LICENSE
-include README.md
-include CHANGELOG.md
-include CLAUDE.md
-include 官方SDK参考.md
-include 官方SDK参考2.md
-include 记忆工具参考文档.md
-recursive-include example *.py
