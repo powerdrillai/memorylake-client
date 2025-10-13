@@ -1,0 +1,37 @@
+---
+description: 
+globs: memorylake/**/*.py
+alwaysApply: false
+---
+## Python Code Style Rules
+
+For Python code, strictly adhere to these style guidelines:
+
+- **Python Version**: Target Python >= 3.10 exclusively. Do not consider compatibility with earlier Python versions.
+
+- **Type Annotations**: 
+  - Always include type annotations when possible, including but not limited to:
+    - Function parameters and return values (either global or local)
+    - Class attributes
+    - Variable declarations (either global or local)
+    - Collection contents (using generics)
+  - Use `dict`/`list`/... instead of legacy `typing.Dict`/`typing.List`/...
+  - Use `|` for optionals and unions instead of legacy `Optional` and `Union`
+
+- **Trailing Commas**: Always add trailing commas at the end of multi-line elements to minimize future git diffs, including but not limited to:
+  - Function definitions and calls with parameters on multiple lines
+  - Multi-line collection literals (lists, dictionaries, tuples, sets, etc.)
+  - Import statements spanning multiple lines
+  - Any comma-separated elements that span multiple lines
+  - ... and more similar cases
+
+- **String Literals**:
+  - Use double quotes for string literals by default: `"Hello"`
+  - Use single quotes only when the string contains double quote characters: `'Hello "World"'`
+  - Use double quotes with escaping when the string contains both single and double quote characters: `"'Hello' \"World\""`
+
+- **Additional Best Practices**:
+  - Use f-strings for string formatting
+  - Leverage Python 3.10+ features
+  - Follow PEP 8 spacing and indentation (4 spaces)
+  - Use meaningful variable names that indicate purpose and type
