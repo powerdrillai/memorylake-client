@@ -1,0 +1,21 @@
+#
+# Unfortunately, flake8 does not support pyproject.toml yet, we have to maintain a separate .flake8 file :(
+# See also https://github.com/PyCQA/flake8/issues/234
+#
+
+[flake8]
+require-plugins = flake8, mccabe, pep8-naming, pycodestyle, pyflakes
+max-line-length = 160
+
+extend-exclude =
+    ./*venv*,
+
+extend-ignore =
+    # F541: f-string is missing placeholders
+    F541,
+
+per-file-ignores =
+    # F401: imported but unused - common in __init__.py and conftest.py files
+    memorylake/__init__.py:F401,
+    memorylake/*/__init__.py:F401,
+    memorylake/*/conftest.py:F401,

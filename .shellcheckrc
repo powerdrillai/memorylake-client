@@ -1,0 +1,22 @@
+# Allow external sources
+external-sources=true
+
+# Suggest explicitly using -n in `[ $var ]`
+# example: case $? in 0) echo 'Success';; esac
+# fix:     case $? in 0) echo 'Success';; *) echo 'Fail' ;; esac
+enable=avoid-nullary-conditions
+
+# Suggest putting braces around all variable references
+# example: var=hello; echo $var
+# fix:     var=hello; echo ${var}
+enable=require-variable-braces
+
+# Notify when set -e is suppressed during function invocation
+# example: set -e; func() { cp *.txt ~/backup; rm *.txt; }; func && echo ok
+# fix:     set -e; func() { cp *.txt ~/backup; rm *.txt; }; func; echo ok
+enable=check-set-e-suppressed
+
+# Suggest quoting variables without metacharacters
+# example: var=hello; echo $var
+# fix:     var=hello; echo "$var"
+enable=quote-safe-variables

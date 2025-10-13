@@ -1,0 +1,19 @@
+---
+description: General rules for this repository
+globs: **/*
+alwaysApply: true
+---
+## General Repository Rules
+
+### Language Requirements
+
+**IMPORTANT**: All content in this repository MUST be in English, including but not limited to:
+
+- Source code (variable names, function names, class names, etc.)
+- Code comments and docstrings
+- Documentation files (README, CHANGELOG, etc.)
+- Git commit messages and PR titles/descriptions
+- Configuration files and scripts
+- Test cases and test descriptions (except for deliberately multilingual test cases, if any)
+- Error messages and log messages
+- Any other text content in the repository

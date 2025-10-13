@@ -1,0 +1,1 @@
+iff->if and only if,do not abbreviate if you mean "if and only if"
