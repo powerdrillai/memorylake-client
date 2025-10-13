@@ -245,3 +245,5 @@ tmp/
 dev/
 development/
 .local/
+
+*.in
