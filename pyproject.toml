@@ -6,13 +6,14 @@ authors = [
     {name = "Powerdrill Authors", email = "info@powerdrill.ai"}
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 keywords = ["memorylake", "memory", "ai", "llm", "agent"]
 license-files = ["LICENSE"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -168,7 +169,7 @@ exclude = [
     "**/__pycache__",
 ]
 
-pythonVersion = "3.10"
+pythonVersion = "3.9"
 pythonPlatform = "All"
 
 executionEnvironments = [

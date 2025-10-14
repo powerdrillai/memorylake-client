@@ -2,7 +2,7 @@
 
 ## Developer Setup
 
-**Prerequisites:** Python 3.10
+**Prerequisites:** Python 3.9
 
 **Install:**
 

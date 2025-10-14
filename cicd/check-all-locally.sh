@@ -18,7 +18,7 @@ function invoke() {
 }
 
 # invoke ./cicd/check-python-import.py
-# invoke ./cicd/check-python-code.py
+invoke ./cicd/check-python-code.py
 invoke ./cicd/check-flake8.sh
 invoke ./cicd/check-isort.sh
 invoke ./cicd/check-basedpyright.sh

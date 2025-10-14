@@ -7,7 +7,7 @@ alwaysApply: false
 
 For Python code, strictly adhere to these style guidelines:
 
-- **Python Version**: Target Python >= 3.10 exclusively. Do not consider compatibility with earlier Python versions.
+- **Python Version**: Target Python >= 3.9 exclusively. Do not consider compatibility with earlier Python versions.
 
 - **Type Annotations**: 
   - Always include type annotations when possible, including but not limited to:
@@ -16,7 +16,7 @@ For Python code, strictly adhere to these style guidelines:
     - Variable declarations (either global or local)
     - Collection contents (using generics)
   - Use `dict`/`list`/... instead of legacy `typing.Dict`/`typing.List`/...
-  - Use `|` for optionals and unions instead of legacy `Optional` and `Union`
+  - Use `Optional` and `Union` for optionals and unions instead of `|`, since we need to support Python 3.9
 
 - **Trailing Commas**: Always add trailing commas at the end of multi-line elements to minimize future git diffs, including but not limited to:
   - Function definitions and calls with parameters on multiple lines
@@ -32,6 +32,6 @@ For Python code, strictly adhere to these style guidelines:
 
 - **Additional Best Practices**:
   - Use f-strings for string formatting
-  - Leverage Python 3.10+ features
+  - Leverage Python 3.9+ features
   - Follow PEP 8 spacing and indentation (4 spaces)
   - Use meaningful variable names that indicate purpose and type
