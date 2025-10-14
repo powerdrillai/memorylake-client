@@ -11,4 +11,7 @@ cd "${REPO_DIR}"
 #
 # Run basedpyright
 #
-run basedpyright --warnings --threads --stats
+# Decide the actual python version we are running on, and use this version for basedpyright
+PYTHON_VERSION="$(python3 -c "from sys import version_info as v; print(f'{v[0]}.{v[1]}')")"
+
+run basedpyright --pythonversion "${PYTHON_VERSION}" --warnings --threads --stats

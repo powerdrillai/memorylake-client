@@ -169,7 +169,7 @@ exclude = [
     "**/__pycache__",
 ]
 
-pythonVersion = "3.9"
+pythonVersion = "3.9"  # This may be overriden in `cicd/check-basedpyright.sh`
 pythonPlatform = "All"
 
 executionEnvironments = [
