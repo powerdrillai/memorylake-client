@@ -1,5 +1,7 @@
 # MemoryLake
 
+[![codecov](https://codecov.io/gh/powerdrillai/memorylake-client/branch/main/graph/badge.svg)](https://codecov.io/gh/powerdrillai/memorylake-client)
+
 ## Developer Setup
 
 **Prerequisites:** Python 3.9

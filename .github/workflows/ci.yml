@@ -1,0 +1,71 @@
+name: Check and Test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+      fail-fast: false
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        # allow-prereleases: true
+
+    - name: Install Dependencies
+      shell: bash
+      run: |
+        python -c "import sys; print(sys.version)"
+        python -m pip install --upgrade pip
+        pip install .[dev]
+
+    - name: Run Checks
+      shell: bash
+      run: |
+        exit_code=0  # always run all check scripts and collect all errors, to ease developers' life :)
+
+        # Check shell
+        ./cicd/check-shell.sh || exit_code="$?"
+
+        # Check Python
+        ./cicd/check-flake8.sh || exit_code="$?"
+        ./cicd/check-isort.sh || exit_code="$?"
+        ./cicd/check-basedpyright.sh || exit_code="$?"
+        ./cicd/check-python-code.py || exit_code="$?"
+        # ./cicd/check-python-import.py || exit_code="$?"
+
+        # Check code spell
+        ./cicd/check-codespell.sh || exit_code="$?"
+
+        exit "${exit_code}"
+
+    - name: Run Tests
+      shell: bash
+      run: |
+        ./cicd/test-all.sh
+
+    - name: Upload to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        file: ./coverage.xml
+        flags: python-${{ matrix.python-version }}
+        name: python-${{ matrix.python-version }}
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

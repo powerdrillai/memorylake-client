@@ -1,0 +1,54 @@
+# Codecov Configuration
+# Learn more: https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  status:
+    # Overall project coverage status check
+    project:
+      default:
+        target: auto        # Coverage target: auto means maintain or improve current level
+        threshold: 1%       # Allow coverage to drop by max 1% and still pass
+        base: auto          # Comparison baseline: auto selects target branch automatically
+
+    # Coverage status check for new/modified code only (patch)
+    patch:
+      default:
+        target: auto       # Coverage target for new code
+        threshold: 1%      # Allow new code coverage to drop by max 1%
+        base: auto         # Comparison baseline for new code
+
+  # Coverage display settings
+  range: 50..100      # Coverage range for badge color gradient (50% red -> 100% green)
+  round: down         # Round down (e.g., 89.9% displays as 89%)
+  precision: 2        # Show 2 decimal places (e.g., 89.12%)
+
+# Files to exclude from coverage calculation
+ignore:
+  - "**/test_*.py"         # Ignore all test files
+  - "**/conftest.py"       # Ignore pytest configuration files
+  - "cicd/**"              # Ignore CI/CD scripts
+
+# Pull request comment settings
+comment:
+  layout: "reach,diff,flags,tree"  # Show: coverage reach, diff, flags, and file tree
+  behavior: default                # Update comment on each push (options: default, once, new, spammy)
+  require_changes: false           # Comment even if no coverage changes
+  require_base: false              # Comment even without base coverage data
+  require_head: true               # Require current commit coverage data
+
+# Flags for tracking coverage across different environments/conditions
+# Each Python version is tracked separately
+flags:
+  python-3.9:
+    carryforward: true    # If this version's test fails, use previous successful data (don't show 0%)
+  python-3.10:
+    carryforward: true
+  python-3.11:
+    carryforward: true
+  python-3.12:
+    carryforward: true
+  python-3.13:
+    carryforward: true
+  python-3.14:
+    carryforward: true
+
