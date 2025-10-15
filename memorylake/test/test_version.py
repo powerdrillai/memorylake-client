@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -22,7 +22,9 @@ def test_version_number_match() -> None:
     # Read the version from pyproject.toml
     with pyproject_path.open("rb") as fp:
         pyproject_data: dict[str, Any] = tomllib.load(fp)
-        pyproject_version: str = pyproject_data["project"]["version"]
+
+    pyproject_version: Union[str, None] = pyproject_data.get("project", {}).get("version", None)
+    assert isinstance(pyproject_version, str)
 
     # Check that the versions match
     assert memorylake.__version__ == pyproject_version
