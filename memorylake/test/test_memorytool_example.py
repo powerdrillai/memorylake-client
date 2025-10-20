@@ -160,7 +160,7 @@ def test_memorytool_file_lifecycle_and_stats(tmp_path: Any) -> None:
     stats_after_delete = tool.stats()
     assert stats_after_delete["files"] == 0
 
-    tool.clear_all()
+    tool.clear_all_memory()
     assert tool.stats() == {"files": 0, "directories": 0, "bytes": 0}
 
 

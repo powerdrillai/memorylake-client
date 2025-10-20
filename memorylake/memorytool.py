@@ -273,9 +273,6 @@ class MemoryTool(BetaAbstractMemoryTool):
             results.append(display)
         return results
 
-    def clear_all(self) -> None:
-        self.clear_all_memory()
-
     def stats(self) -> dict[str, int]:
         totals = {"files": 0, "directories": 0, "bytes": 0}
         if not self._memory_root.exists():

@@ -184,7 +184,7 @@ def _handle_local_command(
                 for item in entries:
                     print(item)
         elif name == "memory-clear":
-            memory_tool.clear_all()
+            memory_tool.clear_all_memory()
             print("Cleared")
         elif name == "memory-stats":
             for key, value in memory_tool.stats().items():
