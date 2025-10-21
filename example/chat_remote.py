@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from typing import Dict, List
 
@@ -15,13 +16,13 @@ from anthropic.types.beta import (
 from pydantic import TypeAdapter
 
 try:
-    from memorylake import MemoryTool, MemoryToolError
+    from memorylake import MemoryLakeMemoryTool, MemoryLakeMemoryToolError
 except ModuleNotFoundError:  # pragma: no cover - fallback when not installed
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from memorylake import MemoryTool, MemoryToolError  # type: ignore
+    from memorylake import MemoryLakeMemoryTool, MemoryLakeMemoryToolError  # type: ignore
 
 # Claude memory tool requires the context management beta header (2025-06-27).
 _BETA_FEATURES = ["context-management-2025-06-27"]
@@ -33,15 +34,35 @@ os.environ["ANTHROPIC_MODEL"] = "claude-sonnet-4-5-20250929"
 
 os.environ["ANTHROPIC_BASE_URL"] = "http://107.155.48.191:8000/anthropic"
 
+os.environ["MEMORYLAKE_BASE_URL"] = "http://117.50.226.120:9180"
+
+os.environ["MEMORYLAKE_MEMORY_ID"] = "mem-fd8b66ec086d4e9b9082f85eb7219dde"
+
 
 def run_chat(
     api_key: str | None,
-    base_url: str | None,
+    anthropic_base_url: str | None,
     model: str,
-    memory_path: str,
+    memorylake_base_url: str,
+    memory_id: str,
+    verbose: bool = False,
 ) -> None:
-    client = Anthropic(api_key=api_key, base_url=base_url)
-    memory_tool = MemoryTool(base_path=memory_path)
+    """
+    Run chat session with remote MemoryLake server.
+
+    Args:
+        api_key: Anthropic API key
+        anthropic_base_url: Anthropic API base URL (optional)
+        model: Claude model identifier
+        memorylake_base_url: MemoryLake server base URL
+        memory_id: Unique memory identifier
+        verbose: If True, print full raw responses and tool use details
+    """
+    client = Anthropic(api_key=api_key, base_url=anthropic_base_url)
+    memory_tool = MemoryLakeMemoryTool(
+        base_url=memorylake_base_url,
+        memory_id=memory_id,
+    )
 
     messages: List[BetaMessageParam] = []
     local_menu: Dict[str, str] = {
@@ -59,11 +80,13 @@ def run_chat(
         "memory-exec": "Execute raw tool command",
     }
 
+    mode_str = "VERBOSE mode" if verbose else "normal mode"
     print(
-        f"🧠 Claude + MemoryTool demo (model: {model}) · type '/exit' to quit "
-        f"· memory directory: {os.path.abspath(memory_path)}/memories"
+        f"🧠 Claude + MemoryLake Remote demo ({mode_str}) (model: {model})\n"
+        f"   Server: {memorylake_base_url}\n"
+        f"   Memory ID: {memory_id}\n"
+        f"   Type '/exit' to quit · Local commands: /help"
     )
-    print("Local commands: /help")
 
     while True:
         user_input = input("\nYou: ").strip()
@@ -71,6 +94,7 @@ def run_chat(
             continue
         if user_input.lower() in {"/exit", "/quit"}:
             print("Conversation ended.")
+            memory_tool.close()
             break
 
         if user_input.startswith("/"):
@@ -92,9 +116,20 @@ def run_chat(
                 tool_choice={"type": "auto"},
             )
 
+            if verbose:
+                # Print full raw response in verbose mode
+                print("\n" + "=" * 80)
+                print("RAW RESPONSE:")
+                print("=" * 80)
+                print(json.dumps(response.model_dump(), indent=2, ensure_ascii=False))
+                print("=" * 80 + "\n")
+
             messages.append({"role": "assistant", "content": response.content})
 
+            # Collect all tool results
+            tool_results: List[BetaContentBlockParam] = []
             printed_header = False
+
             for block in response.content:
                 if block.type == "text":
                     if not printed_header:
@@ -102,23 +137,67 @@ def run_chat(
                         printed_header = True
                     print(block.text)
                 elif block.type == "tool_use" and block.name == "memory":
+                    # Always print tool use details
+                    print("\n" + "-" * 80)
+                    print("🔧 TOOL USE:")
+                    print("-" * 80)
+                    input_dict = dict(block.input) if hasattr(block.input, 'items') else block.input
+                    print(f"Command: {input_dict.get('command', 'unknown')}")
+                    if 'path' in input_dict:
+                        print(f"Path: {input_dict['path']}")
+                    if 'old_path' in input_dict:
+                        print(f"Old Path: {input_dict['old_path']}")
+                    if 'new_path' in input_dict:
+                        print(f"New Path: {input_dict['new_path']}")
+                    if 'file_text' in input_dict:
+                        preview = str(input_dict['file_text'])[:100]
+                        if len(str(input_dict['file_text'])) > 100:
+                            preview += "..."
+                        print(f"Content: {preview}")
+                    if 'old_str' in input_dict:
+                        print(f"Old String: {str(input_dict['old_str'])[:50]}...")
+                    if 'new_str' in input_dict:
+                        print(f"New String: {str(input_dict['new_str'])[:50]}...")
+                    if 'insert_line' in input_dict:
+                        print(f"Insert Line: {input_dict['insert_line']}")
+                    if 'insert_text' in input_dict:
+                        print(f"Insert Text: {str(input_dict['insert_text'])[:50]}...")
+                    if 'view_range' in input_dict:
+                        print(f"View Range: {input_dict['view_range']}")
+                    print("-" * 80)
+
+                    if verbose:
+                        # Print full raw input in verbose mode
+                        print(f"Full Input: {json.dumps(input_dict, indent=2, ensure_ascii=False)}")
+                        print("-" * 80)
+
                     command = _COMMAND_ADAPTER.validate_python(block.input)
                     result_text = memory_tool.execute(command)
+
+                    result_preview = str(result_text)[:200]
+                    if len(str(result_text)) > 200:
+                        result_preview += "..."
+                    print(f"✓ Result: {result_preview}\n")
+
+                    if verbose:
+                        print(f"Full Result: {result_text}\n")
 
                     tool_result_block: BetaContentBlockParam = {
                         "type": "tool_result",
                         "tool_use_id": block.id,
                         "content": result_text,
                     }
-                    messages.append({"role": "user", "content": [tool_result_block]})
-                    needs_follow_up = True
-                    printed_header = False
-                    break
+                    tool_results.append(tool_result_block)
+
+            # If there were any tool uses, add all results and continue
+            if tool_results:
+                messages.append({"role": "user", "content": tool_results})
+                needs_follow_up = True
 
 
 def _handle_local_command(
     raw: str,
-    memory_tool: MemoryTool,
+    memory_tool: MemoryLakeMemoryTool,
     menu: Dict[str, str],
 ) -> bool:
     command_line = raw[1:].strip()
@@ -137,40 +216,79 @@ def _handle_local_command(
             path = args[0] if args else _prompt("Path")
             view_range = None
             if len(args) >= 3:
-                view_range = (int(args[1]), int(args[2]))
+                view_range = [int(args[1]), int(args[2])]
             else:
                 range_input = _prompt("Line range (e.g. 1 10, optional)")
                 if range_input:
                     tokens = range_input.replace(",", " ").split()
                     if len(tokens) == 2:
-                        view_range = (int(tokens[0]), int(tokens[1]))
-            print(memory_tool.view_path(path, view_range))
+                        view_range = [int(tokens[0]), int(tokens[1])]
+            # Use execute with view command
+            from anthropic.types.beta import BetaMemoryTool20250818ViewCommand
+            view_cmd = BetaMemoryTool20250818ViewCommand(
+                command="view",
+                path=path,
+                view_range=view_range,
+            )
+            result = memory_tool.execute(view_cmd)
+            print(result)
         elif name == "memory-create":
             path = args[0] if args else _prompt("Path")
             text = " ".join(args[1:]) if len(args) > 1 else _prompt("Content")
-            memory_tool.create_file(path, text)
-            print("Created")
+            from anthropic.types.beta import BetaMemoryTool20250818CreateCommand
+            create_cmd = BetaMemoryTool20250818CreateCommand(
+                command="create",
+                path=path,
+                file_text=text,
+            )
+            result = memory_tool.execute(create_cmd)
+            print(result)
         elif name == "memory-insert":
             path = args[0] if args else _prompt("Path")
             line_index = int(args[1]) if len(args) > 1 else int(_prompt("Line number"))
             text = " ".join(args[2:]) if len(args) > 2 else _prompt("Text")
-            memory_tool.insert_line(path, line_index, text)
-            print("Inserted")
+            from anthropic.types.beta import BetaMemoryTool20250818InsertCommand
+            insert_cmd = BetaMemoryTool20250818InsertCommand(
+                command="insert",
+                path=path,
+                insert_line=line_index,
+                insert_text=text,
+            )
+            result = memory_tool.execute(insert_cmd)
+            print(result)
         elif name == "memory-replace":
             path = args[0] if args else _prompt("Path")
             old = args[1] if len(args) > 1 else _prompt("Old text")
             new = args[2] if len(args) > 2 else _prompt("New text")
-            memory_tool.replace_text(path, old, new)
-            print("Replaced")
+            from anthropic.types.beta import BetaMemoryTool20250818StrReplaceCommand
+            replace_cmd = BetaMemoryTool20250818StrReplaceCommand(
+                command="str_replace",
+                path=path,
+                old_str=old,
+                new_str=new,
+            )
+            result = memory_tool.execute(replace_cmd)
+            print(result)
         elif name == "memory-delete":
             path = args[0] if args else _prompt("Path")
-            memory_tool.delete_path(path)
-            print("Deleted")
+            from anthropic.types.beta import BetaMemoryTool20250818DeleteCommand
+            delete_cmd = BetaMemoryTool20250818DeleteCommand(
+                command="delete",
+                path=path,
+            )
+            result = memory_tool.execute(delete_cmd)
+            print(result)
         elif name == "memory-rename":
             old = args[0] if args else _prompt("Old path")
             new = args[1] if len(args) > 1 else _prompt("New path")
-            memory_tool.rename_path(old, new)
-            print("Renamed")
+            from anthropic.types.beta import BetaMemoryTool20250818RenameCommand
+            rename_cmd = BetaMemoryTool20250818RenameCommand(
+                command="rename",
+                old_path=old,
+                new_path=new,
+            )
+            result = memory_tool.execute(rename_cmd)
+            print(result)
         elif name == "memory-exists":
             path = args[0] if args else _prompt("Path")
             exists = memory_tool.memory_exists(path)
@@ -184,8 +302,12 @@ def _handle_local_command(
                 for item in entries:
                     print(item)
         elif name == "memory-clear":
-            memory_tool.clear_all_memory()
-            print("Cleared")
+            confirm = _prompt("Are you sure you want to clear all memories? (yes/no)")
+            if confirm.lower() == "yes":
+                result = memory_tool.clear_all_memory()
+                print(result)
+            else:
+                print("Cancelled")
         elif name == "memory-stats":
             for key, value in memory_tool.stats().items():
                 print(f"{key}: {value}")
@@ -193,7 +315,7 @@ def _handle_local_command(
             _run_exec_command(memory_tool, args)
         else:
             print("Unknown command")
-    except MemoryToolError as exc:
+    except MemoryLakeMemoryToolError as exc:
         print(f"Error: {exc}")
     except ValueError as exc:
         print(f"Invalid input: {exc}")
@@ -202,7 +324,7 @@ def _handle_local_command(
     return True
 
 
-def _run_exec_command(memory_tool: MemoryTool, args: List[str]) -> None:
+def _run_exec_command(memory_tool: MemoryLakeMemoryTool, args: List[str]) -> None:
     command = args[0] if args else _prompt("command (view/create/insert/str_replace/delete/rename)")
     extra = args[1:]
     payload: Dict[str, object] = {"command": command}
@@ -260,14 +382,14 @@ def _prompt(label: str) -> str:
 
 def _parse_args() -> argparse.Namespace:
     default_model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
-    parser = argparse.ArgumentParser(description="Anthropic memory tool chat demo.")
+    parser = argparse.ArgumentParser(description="Anthropic memory tool chat demo with remote MemoryLake server.")
     parser.add_argument(
         "--api-key",
         default=os.environ.get("ANTHROPIC_API_KEY"),
         help="Anthropic API key (falls back to ANTHROPIC_API_KEY env).",
     )
     parser.add_argument(
-        "--base-url",
+        "--anthropic-base-url",
         default=os.environ.get("ANTHROPIC_BASE_URL"),
         help="Anthropic API base URL (falls back to ANTHROPIC_BASE_URL env).",
     )
@@ -277,9 +399,19 @@ def _parse_args() -> argparse.Namespace:
         help=f"Claude model identifier (default: {default_model}).",
     )
     parser.add_argument(
-        "--memory-path",
-        default=os.environ.get("MEMORY_BASE_PATH", "./memory"),
-        help="Local directory used to persist memories (default: ./memory).",
+        "--memorylake-base-url",
+        default=os.environ.get("MEMORYLAKE_BASE_URL"),
+        help="MemoryLake server base URL (falls back to MEMORYLAKE_BASE_URL env).",
+    )
+    parser.add_argument(
+        "--memory-id",
+        default=os.environ.get("MEMORYLAKE_MEMORY_ID"),
+        help="Memory identifier (falls back to MEMORYLAKE_MEMORY_ID env).",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show full raw responses and tool use details.",
     )
     args = parser.parse_args()
     if not args.api_key:
@@ -293,7 +425,9 @@ if __name__ == "__main__":
     args = _parse_args()
     run_chat(
         api_key=args.api_key,
-        base_url=args.base_url,
+        anthropic_base_url=args.anthropic_base_url,
         model=args.model,
-        memory_path=args.memory_path,
+        memorylake_base_url=args.memorylake_base_url,
+        memory_id=args.memory_id,
+        verbose=args.verbose,
     )

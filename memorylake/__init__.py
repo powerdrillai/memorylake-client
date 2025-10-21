@@ -1,12 +1,29 @@
 """Public interface for the MemoryLake client package."""
 
-__version__: str = "0.1.0"
-
-__all__ = ["MemoryTool", "MemoryToolError", "MemoryToolOperationError", "MemoryToolPathError", "__version__"]
-
+from ._version import __version__
+from .async_memorylake_memorytool import (
+    AsyncMemoryLakeMemoryTool,
+    AsyncMemoryLakeMemoryToolError,
+)
+from .memorylake_memorytool import (
+    MemoryLakeMemoryTool,
+    MemoryLakeMemoryToolError,
+)
 from .memorytool import (
     MemoryTool,
     MemoryToolError,
     MemoryToolOperationError,
     MemoryToolPathError,
 )
+
+__all__ = [
+    "MemoryTool",
+    "MemoryToolError",
+    "MemoryToolOperationError",
+    "MemoryToolPathError",
+    "MemoryLakeMemoryTool",
+    "MemoryLakeMemoryToolError",
+    "AsyncMemoryLakeMemoryTool",
+    "AsyncMemoryLakeMemoryToolError",
+    "__version__",
+]

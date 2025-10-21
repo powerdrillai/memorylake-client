@@ -26,6 +26,7 @@ coverage.xml
 # Ignore logs
 .serena/
 AGENTS.md
+CLAUDE.md
 
 
 
