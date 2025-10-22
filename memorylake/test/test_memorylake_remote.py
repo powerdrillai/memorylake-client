@@ -136,14 +136,15 @@ class _MemoryLakeHTTPServer(ThreadingHTTPServer):
             return {"error": f"path not found: {path}"}
 
         lines: list[str] = list(text.splitlines())
-        if isinstance(view_range, list) and len(view_range) == 2:
+        if isinstance(view_range, list):
             range_list = cast(list[object], view_range)
-            first_candidate: object = range_list[0]
-            second_candidate: object = range_list[1]
-            if isinstance(first_candidate, int) and isinstance(second_candidate, int):
-                start_index = max(first_candidate - 1, 0)
-                end_index = len(lines) if second_candidate == -1 else max(second_candidate, start_index + 1)
-                lines = lines[start_index:end_index]
+            if len(range_list) == 2:
+                first_candidate: object = range_list[0]
+                second_candidate: object = range_list[1]
+                if isinstance(first_candidate, int) and isinstance(second_candidate, int):
+                    start_index = max(first_candidate - 1, 0)
+                    end_index = len(lines) if second_candidate == -1 else max(second_candidate, start_index + 1)
+                    lines = lines[start_index:end_index]
         content = "\n".join(lines)
         return {"content": content}
 
