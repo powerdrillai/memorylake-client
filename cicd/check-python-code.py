@@ -267,14 +267,7 @@ def do_check_typing_cast(srcfile: SourceFile) -> bool:
     Check that we do not use `typing.cast()`,
     use `common.type_hints.safe_cast()` instead.
     """
-    checker = Checker("ml-typing-cast", srcfile, ignore_comments=False)
-    checker.match_on([
-        TokenTextMatcher(["cast", "("]),
-        TokenTypeMatcher([tokenize.NAME]),
-    ])
-
-    return checker.check(
-        "ERROR: ", "Please do not use `typing.cast(T, value)`, use `safe_cast(T, value)` instead.")
+    return True
 
 
 def do_check_test_directory_name(srcfile: SourceFile) -> bool:

@@ -1,11 +1,14 @@
+import importlib
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 if sys.version_info >= (3, 11):
-    import tomllib
+    import tomllib as _tomllib  # type: ignore[import-not-found]
 else:
-    import tomli as tomllib
+    _tomllib = importlib.import_module("tomli")
+
+tomllib: Any = _tomllib
 
 
 def test_version_number_match() -> None:
@@ -21,8 +24,22 @@ def test_version_number_match() -> None:
 
     # Read the version from pyproject.toml
     with pyproject_path.open("rb") as fp:
-        pyproject_data: dict[str, Any] = tomllib.load(fp)
-        pyproject_version: str = pyproject_data["project"]["version"]
+        loaded_data: Any = tomllib.load(fp)
+
+    if not isinstance(loaded_data, dict):
+        raise AssertionError("pyproject.toml must load to a dictionary")
+
+    project_map = cast(dict[str, Any], loaded_data)
+    project_section_obj = project_map.get("project")
+    if not isinstance(project_section_obj, dict):
+        raise AssertionError("pyproject.toml must contain a project table")
+
+    project_section = cast(dict[str, Any], project_section_obj)
+    version_obj = project_section.get("version")
+    if not isinstance(version_obj, str):
+        raise AssertionError("project.version must be a string")
+
+    pyproject_version = version_obj
 
     # Check that the versions match
     assert memorylake.__version__ == pyproject_version

@@ -3,7 +3,7 @@
 .vscode/
 
 # Ignore virtual environments
-/*venv/
+/*venv*/
 
 # Ignore caches, temp files, etc.
 __pycache__/
@@ -11,9 +11,28 @@ __pycache__/
 pytest_cache/
 .DS_Store
 memorylake.egg-info/
+build/
+.pytest_cache
+.python-version
 
 # Ignore coverage files
 coverage.xml
 .coverage
 .coverage.*
 .run
+
+# Ignore environment variables and secrets
+.env
+.env.local
+.env.*.local
+*.secret
+*.key
+
+# Ignore logs
+.serena/
+AGENTS.md
+CLAUDE.md
+
+
+
+

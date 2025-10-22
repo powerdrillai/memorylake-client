@@ -10,7 +10,7 @@ cd "${REPO_DIR}"
 
 run codespell --version
 run codespell \
-    --skip ".git,venv,.venv,.mypy_cache,.pytest_cache,__pycache__,.idea,third_party" \
+    --skip ".git,venv,.venv,venv*,.mypy_cache,.pytest_cache,__pycache__,.idea,third_party" \
     --builtin clear,rare,en-GB_to_en-US \
     --ignore-words ./cicd/codespell-ignore-words.txt \
     --dictionary ./cicd/codespell-custom-dictionary.txt \
