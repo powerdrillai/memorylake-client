@@ -15,23 +15,17 @@ from anthropic.types.beta import (
 from pydantic import TypeAdapter
 
 try:
-    from memorylake import MemoryTool, MemoryToolError
+    from memorylake import MemoryLakeClient, MemoryTool, MemoryToolError
 except ModuleNotFoundError:  # pragma: no cover - fallback when not installed
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from memorylake import MemoryTool, MemoryToolError  # type: ignore
+    from memorylake import MemoryLakeClient, MemoryTool, MemoryToolError  # type: ignore
 
 # Claude memory tool requires the context management beta header (2025-06-27).
 _BETA_FEATURES = ["context-management-2025-06-27"]
 _COMMAND_ADAPTER = TypeAdapter(BetaMemoryTool20250818Command)
-
-os.environ["ANTHROPIC_API_KEY"] = "DUMMY"
-
-os.environ["ANTHROPIC_MODEL"] = "claude-sonnet-4-5-20250929"
-
-os.environ["ANTHROPIC_BASE_URL"] = "http://107.155.48.191:8000/anthropic"
 
 
 def run_chat(
@@ -41,7 +35,8 @@ def run_chat(
     memory_path: str,
 ) -> None:
     client = Anthropic(api_key=api_key, base_url=base_url)
-    memory_tool = MemoryTool(base_path=memory_path)
+    memory_client = MemoryLakeClient.from_local(storage_path=memory_path)
+    memory_tool = memory_client.create_local_tool()
 
     messages: List[BetaMessageParam] = []
     local_menu: Dict[str, str] = {

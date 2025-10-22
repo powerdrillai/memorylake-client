@@ -57,6 +57,9 @@ jobs:
 
     - name: Run Tests
       shell: bash
+      env:
+        MEMORYLAKE_BASE_URL: ${{ secrets.MEMORYLAKE_BASE_URL }}
+        MEMORYLAKE_MEMORY_ID: ${{ secrets.MEMORYLAKE_MEMORY_ID }}
       run: |
         ./cicd/test-all.sh
 

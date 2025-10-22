@@ -29,9 +29,16 @@ from anthropic.types.beta import (
 from pydantic import TypeAdapter
 from typing_extensions import override
 
-__all__ = ["MemoryLakeMemoryTool", "MemoryLakeMemoryToolError"]
-
 from ._version import __version__
+
+JsonDict = dict[str, object]
+
+
+def _dict_with_string_keys(source: Mapping[object, object]) -> JsonDict:
+    return {str(key): value for key, value in source.items()}
+
+
+__all__ = ["MemoryLakeMemoryTool", "MemoryLakeMemoryToolError"]
 
 
 class MemoryLakeMemoryToolError(Exception):
@@ -67,12 +74,13 @@ class MemoryLakeMemoryTool(BetaAbstractMemoryTool):
         self._base_url: str = base_url.rstrip("/")
         self._memory_id: str = memory_id
         self._timeout: float = timeout
-        self._headers: dict[str, str] = dict(headers) if headers is not None else {}
-        merged_headers: dict[str, str] = {**self._headers, "x-memorylake-client-version": __version__}
+        base_headers: dict[str, str] = dict(headers) if headers is not None else {}
+        merged_headers: dict[str, str] = {**base_headers, "x-memorylake-client-version": __version__}
+        self._headers: dict[str, str] = dict(merged_headers)
         self._client: httpx.Client = httpx.Client(
             base_url=self._base_url,
             timeout=self._timeout,
-            headers=merged_headers,
+            headers=self._headers,
         )
 
     def __del__(self) -> None:
@@ -103,28 +111,44 @@ class MemoryLakeMemoryTool(BetaAbstractMemoryTool):
         try:
             response = self._client.post(self._API_ENDPOINT, json=request_body)
             response.raise_for_status()
-            result: Any = response.json()
+            result_obj: object = response.json()
 
-            # Handle error responses from the server
-            if isinstance(result, dict) and "error" in result:
-                error_msg: str = str(result["error"])
-                raise MemoryLakeMemoryToolError(error_msg)
+            if isinstance(result_obj, dict):
+                result_dict = _dict_with_string_keys(result_obj)
+                error_value = result_dict.get("error")
+                if error_value is not None:
+                    raise MemoryLakeMemoryToolError(str(error_value))
 
-            # Return the content as a string
-            if isinstance(result, dict):
-                if "content" not in result:
-                    raise MemoryLakeMemoryToolError(f"Invalid response: missing 'content' field: {result}")
-                content: Any = result["content"]
-                return str(content)
-            else:
-                return str(result)
+                content_value = result_dict.get("content")
+                if content_value is None:
+                    raise MemoryLakeMemoryToolError(
+                        f"Invalid response: missing 'content' field: {result_dict}",
+                    )
+
+                return str(content_value)
+
+            return str(result_obj)
 
         except httpx.HTTPStatusError as exc:
             error_detail: str = f"HTTP {exc.response.status_code}"
             try:
-                error_body: Any = exc.response.json()
-                if isinstance(error_body, dict) and "error" in error_body:
-                    error_detail = str(error_body["error"])
+                error_json: object = exc.response.json()
+                if isinstance(error_json, dict):
+                    dict_body = _dict_with_string_keys(error_json)
+                    error_value = dict_body.get("error") or dict_body.get("detail")
+                    if error_value is not None:
+                        error_detail = str(error_value)
+                elif isinstance(error_json, list):
+                    list_body: list[object] = list(error_json)
+                    if list_body:
+                        first_entry = list_body[0]
+                        if isinstance(first_entry, dict):
+                            first_dict = _dict_with_string_keys(first_entry)
+                            detail_value = first_dict.get("detail") or first_dict.get("msg")
+                            if detail_value is not None:
+                                error_detail = str(detail_value)
+                elif isinstance(error_json, str):
+                    error_detail = error_json
             except Exception:
                 error_detail = exc.response.text or error_detail
 
@@ -197,121 +221,6 @@ class MemoryLakeMemoryTool(BetaAbstractMemoryTool):
     def clear_all_memory(self) -> str:
         payload = {"command": "clear_all_memory"}
         return self._execute_remote_command(payload)
-
-    # ------------------------------------------------------------------ #
-    # Extended API methods (not part of BetaAbstractMemoryTool)
-    # ------------------------------------------------------------------ #
-    def memory_exists(self, path: str) -> bool:
-        """
-        Check if a memory path exists on the remote server.
-
-        Args:
-            path: Memory path to check
-
-        Returns:
-            True if the path exists, False otherwise
-
-        Raises:
-            MemoryLakeMemoryToolError: If the request fails
-        """
-        request_body: dict[str, Any] = {
-            "memory_id": self._memory_id,
-            "request": self._REQUEST_VERSION,
-            "payload": {"command": "exists", "path": path},
-        }
-
-        try:
-            response = self._client.post(self._API_ENDPOINT, json=request_body)
-            response.raise_for_status()
-            result = response.json()
-            return bool(result.get("exists", False))
-        except httpx.RequestError as exc:
-            raise MemoryLakeMemoryToolError(f"Request failed: {exc}") from exc
-
-    def list_memories(self, path: str = "/memories") -> list[str]:
-        """
-        List all memory paths under the given directory.
-
-        Args:
-            path: Directory path to list (default: "/memories")
-
-        Returns:
-            List of memory paths
-
-        Raises:
-            MemoryLakeMemoryToolError: If the request fails
-        """
-        request_body: dict[str, Any] = {
-            "memory_id": self._memory_id,
-            "request": self._REQUEST_VERSION,
-            "payload": {"command": "list", "path": path},
-        }
-
-        try:
-            response = self._client.post(self._API_ENDPOINT, json=request_body)
-            response.raise_for_status()
-            result: Any = response.json()
-
-            if not isinstance(result, dict):
-                raise MemoryLakeMemoryToolError(f"Invalid response format: expected dict, got {type(result).__name__}")
-
-            memories: Any = result.get("memories", [])
-            if not isinstance(memories, list):
-                raise MemoryLakeMemoryToolError(f"Invalid memories format: expected list, got {type(memories).__name__}")
-
-            return [str(item) for item in memories]
-        except httpx.HTTPStatusError as exc:
-            error_detail: str = f"HTTP {exc.response.status_code}"
-            try:
-                error_body: Any = exc.response.json()
-                if isinstance(error_body, dict) and "error" in error_body:
-                    error_detail = str(error_body["error"])
-            except Exception:
-                error_detail = exc.response.text or error_detail
-            raise MemoryLakeMemoryToolError(f"List failed: {error_detail}") from exc
-        except httpx.RequestError as exc:
-            raise MemoryLakeMemoryToolError(f"Request failed: {exc}") from exc
-
-    def stats(self) -> dict[str, int]:
-        """
-        Get statistics about the remote memory storage.
-
-        Returns:
-            Dictionary with keys: "files", "directories", "bytes"
-
-        Raises:
-            MemoryLakeMemoryToolError: If the request fails
-        """
-        request_body: dict[str, Any] = {
-            "memory_id": self._memory_id,
-            "request": self._REQUEST_VERSION,
-            "payload": {"command": "stats"},
-        }
-
-        try:
-            response = self._client.post(self._API_ENDPOINT, json=request_body)
-            response.raise_for_status()
-            result: Any = response.json()
-
-            if not isinstance(result, dict):
-                raise MemoryLakeMemoryToolError(f"Invalid response format: expected dict, got {type(result).__name__}")
-
-            return {
-                "files": int(result.get("files", 0)),
-                "directories": int(result.get("directories", 0)),
-                "bytes": int(result.get("bytes", 0)),
-            }
-        except httpx.HTTPStatusError as exc:
-            error_detail: str = f"HTTP {exc.response.status_code}"
-            try:
-                error_body: Any = exc.response.json()
-                if isinstance(error_body, dict) and "error" in error_body:
-                    error_detail = str(error_body["error"])
-            except Exception:
-                error_detail = exc.response.text or error_detail
-            raise MemoryLakeMemoryToolError(f"Stats failed: {error_detail}") from exc
-        except httpx.RequestError as exc:
-            raise MemoryLakeMemoryToolError(f"Request failed: {exc}") from exc
 
     def execute_tool_payload(self, payload: Mapping[str, object]) -> str:
         """Validate and execute a raw tool payload from Anthropic responses."""

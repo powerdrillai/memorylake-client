@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+import json
+import threading
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import PurePosixPath
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -12,6 +19,7 @@ from anthropic.types.beta import (
     BetaMemoryTool20250818StrReplaceCommand,
     BetaMemoryTool20250818ViewCommand,
 )
+from typing_extensions import override
 
 import memorylake
 from memorylake.async_memorylake_memorytool import (
@@ -23,809 +31,625 @@ from memorylake.memorylake_memorytool import (
     MemoryLakeMemoryToolError,
 )
 
-_COMMAND_ORDER = [
-    "create",
-    "str_replace",
-    "insert",
-    "delete",
-    "rename",
-    "clear_all_memory",
-    "exists",
-    "list",
-    "stats",
-]
+JsonDict = dict[str, Any]
+OverrideCallable = Callable[[JsonDict], tuple[int, Any]]
 
 
-class _DummyResponse:
-    def __init__(self, data: Any) -> None:
-        self._data = data
-
-    def raise_for_status(self) -> None:
-        return None
-
-    def json(self) -> Any:
-        return self._data
+def _dict_with_string_keys(source: Mapping[object, object]) -> JsonDict:
+    return {str(key): value for key, value in source.items()}
 
 
-class _DummyAsyncResponse:
-    def __init__(self, data: Any) -> None:
-        self._data = data
-
-    def raise_for_status(self) -> None:
-        return None
-
-    def json(self) -> Any:
-        return self._data
+@dataclass()
+class _RecordedRequest:
+    headers: dict[str, str]
+    payload: JsonDict
 
 
-class _DummyClient:
-    def __init__(self, *, base_url: str, timeout: float, headers: dict[str, str], **_: Any) -> None:
-        self.base_url = base_url
-        self.timeout = timeout
-        self.headers = headers
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-        self.closed = False
+class _MemoryLakeHTTPServer(ThreadingHTTPServer):
+    memory_id: ClassVar[str] = "mem-test"
 
-    def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-        self.calls.append((endpoint, json))
-        command = json["payload"]["command"]
-        if command == "create":
-            return _DummyResponse({"content": "created"})
-        if command == "str_replace":
-            return _DummyResponse({"content": "replaced"})
-        if command == "insert":
-            return _DummyResponse({"content": "inserted"})
-        if command == "delete":
-            return _DummyResponse({"content": "deleted"})
-        if command == "rename":
-            return _DummyResponse({"content": "renamed"})
-        if command == "clear_all_memory":
-            return _DummyResponse({"content": "cleared"})
-        if command == "list":
-            return _DummyResponse({"memories": ["/memories/a.txt", "/memories/b/"]})
-        if command == "stats":
-            return _DummyResponse({"files": 2, "directories": 1, "bytes": 10})
-        if command == "exists":
-            return _DummyResponse({"exists": True})
-        return _DummyResponse({"content": "ok"})
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), _MemoryLakeRequestHandler)
+        self.files: dict[str, str] = {}
+        self.request_log: list[_RecordedRequest] = []
+        self.response_overrides: dict[str, OverrideCallable] = {}
+        self._lock: threading.Lock = threading.Lock()
 
-    def close(self) -> None:
-        self.closed = True
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.server_port}"
 
+    def reset(self) -> None:
+        with self._lock:
+            self.files.clear()
+            self.request_log.clear()
+            self.response_overrides.clear()
 
-class _DummyAsyncClient:
-    def __init__(self, *, base_url: str, timeout: float, headers: dict[str, str], **_: Any) -> None:
-        self.base_url = base_url
-        self.timeout = timeout
-        self.headers = headers
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-        self.closed = False
+    def record_request(self, headers: dict[str, str], payload: JsonDict) -> None:
+        with self._lock:
+            self.request_log.append(_RecordedRequest(headers=headers, payload=payload))
 
-    async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-        self.calls.append((endpoint, json))
-        command = json["payload"]["command"]
-        if command == "view":
-            return _DummyAsyncResponse({"content": "async-view"})
-        if command == "create":
-            return _DummyAsyncResponse({"content": "async-create"})
-        if command == "str_replace":
-            return _DummyAsyncResponse({"content": "async-replace"})
-        if command == "insert":
-            return _DummyAsyncResponse({"content": "async-insert"})
-        if command == "delete":
-            return _DummyAsyncResponse({"content": "async-delete"})
-        if command == "rename":
-            return _DummyAsyncResponse({"content": "async-rename"})
-        if command == "clear_all_memory":
-            return _DummyAsyncResponse({"content": "async-clear"})
-        if command == "list":
-            return _DummyAsyncResponse({"memories": ["/memories/x.txt"]})
-        if command == "stats":
-            return _DummyAsyncResponse({"files": 1, "directories": 0, "bytes": 5})
-        if command == "exists":
-            return _DummyAsyncResponse({"exists": False})
-        return _DummyAsyncResponse({"content": "async-ok"})
-
-    async def aclose(self) -> None:
-        self.closed = True
-
-    async def __aenter__(self) -> "_DummyAsyncClient":
-        return self
-
-    async def __aexit__(
+    def set_override(
         self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: Any,
+        command: str,
+        provider: OverrideCallable,
     ) -> None:
-        self.closed = True
+        with self._lock:
+            self.response_overrides[command] = provider
+
+    def get_override(self, command: str) -> OverrideCallable | None:
+        with self._lock:
+            return self.response_overrides.get(command)
+
+    def clear_override(self, command: str) -> None:
+        with self._lock:
+            self.response_overrides.pop(command, None)
+
+    def handle_command(self, command: str, payload: JsonDict) -> tuple[int, Any]:
+        override = self.get_override(command)
+        if override is not None:
+            return override(payload)
+
+        if command == "create":
+            return 200, self._create(payload)
+        if command == "view":
+            return 200, self._view(payload)
+        if command == "str_replace":
+            return 200, self._str_replace(payload)
+        if command == "insert":
+            return 200, self._insert(payload)
+        if command == "delete":
+            return 200, self._delete(payload)
+        if command == "rename":
+            return 200, self._rename(payload)
+        if command == "clear_all_memory":
+            return 200, self._clear_all_memory()
+        if command == "exists":
+            return 200, self._exists(payload)
+        if command == "list":
+            return 200, self._list()
+        if command == "stats":
+            return 200, self._stats()
+
+        return 400, {"error": f"unsupported command: {command}"}
+
+    def _create(self, payload: JsonDict) -> dict[str, str]:
+        path = str(payload["path"])
+        text = str(payload.get("file_text", ""))
+        with self._lock:
+            self.files[path] = text
+        return {"content": "created"}
+
+    def _view(self, payload: JsonDict) -> dict[str, str]:
+        path = str(payload["path"])
+        view_range = payload.get("view_range")
+
+        with self._lock:
+            if path.endswith("/"):
+                entries = self._directory_entries(path)
+                content = "\n".join(entries)
+                return {"content": content}
+
+            text = self.files.get(path)
+
+        if text is None:
+            return {"error": f"path not found: {path}"}
+
+        lines = text.splitlines()
+        if isinstance(view_range, list) and len(view_range) == 2:
+            start_candidate, end_candidate = view_range
+            if isinstance(start_candidate, int) and isinstance(end_candidate, int):
+                start = max(start_candidate - 1, 0)
+                end = len(lines) if end_candidate == -1 else max(end_candidate, start + 1)
+                lines = lines[start:end]
+        content = "\n".join(lines)
+        return {"content": content}
+
+    def _str_replace(self, payload: JsonDict) -> dict[str, str]:
+        path = str(payload["path"])
+        old = str(payload.get("old_str", ""))
+        new = str(payload.get("new_str", ""))
+        with self._lock:
+            text = self.files.get(path, "")
+            self.files[path] = text.replace(old, new)
+        return {"content": "replaced"}
+
+    def _insert(self, payload: JsonDict) -> dict[str, str]:
+        path = str(payload["path"])
+        line_index = int(payload.get("insert_line", 0))
+        insert_text = str(payload.get("insert_text", ""))
+        with self._lock:
+            text = self.files.get(path, "")
+            lines = text.splitlines()
+            line_count = len(lines)
+            min_allowed = 0
+            if line_index < min_allowed:
+                line_index = min_allowed
+            if line_index > line_count:
+                line_index = line_count
+
+            if line_index == 0:
+                insert_at = 0
+            elif line_index >= line_count:
+                insert_at = line_count
+            else:
+                insert_at = line_index
+
+            lines.insert(insert_at, insert_text)
+            self.files[path] = "\n".join(lines)
+        return {"content": "inserted"}
+
+    def _delete(self, payload: JsonDict) -> dict[str, str]:
+        path = str(payload["path"])
+        with self._lock:
+            if path.endswith("/"):
+                keys = [key for key in self.files if key.startswith(path)]
+                for key in keys:
+                    self.files.pop(key, None)
+                return {"content": "deleted"}
+
+            if path in self.files:
+                self.files.pop(path, None)
+                return {"content": "deleted"}
+
+        return {"error": f"path not found: {path}"}
+
+    def _rename(self, payload: JsonDict) -> dict[str, str]:
+        old_path = str(payload.get("old_path"))
+        new_path = str(payload.get("new_path"))
+        with self._lock:
+            if old_path not in self.files:
+                return {"error": f"source missing: {old_path}"}
+            self.files[new_path] = self.files.pop(old_path)
+        return {"content": "renamed"}
+
+    def _clear_all_memory(self) -> dict[str, str]:
+        with self._lock:
+            self.files.clear()
+        return {"content": "cleared"}
+
+    def _exists(self, payload: JsonDict) -> dict[str, Any]:
+        path = str(payload.get("path"))
+        with self._lock:
+            exists = path in self.files or any(key.startswith(f"{path.rstrip('/')}/") for key in self.files)
+        return {"exists": exists}
+
+    def _list(self) -> dict[str, Any]:
+        with self._lock:
+            files = list(self.files.keys())
+
+        directories: set[str] = set()
+        for file_path in files:
+            current = PurePosixPath(file_path)
+            for parent in current.parents:
+                parent_str = str(parent)
+                if parent_str.startswith("/memories") and parent_str != "/":
+                    directories.add(parent_str + "/")
+
+        entries = sorted(directories.union(files))
+        return {"memories": entries}
+
+    def _stats(self) -> dict[str, int]:
+        with self._lock:
+            files = dict(self.files)
+
+        directories: set[str] = set()
+        byte_total = 0
+        for path, content in files.items():
+            byte_total += len(content.encode("utf-8"))
+            current = PurePosixPath(path)
+            for parent in current.parents:
+                parent_str = str(parent)
+                if parent_str.startswith("/memories") and parent_str != "/":
+                    directories.add(parent_str)
+
+        return {
+            "files": len(files),
+            "directories": len(directories),
+            "bytes": byte_total,
+        }
+
+    def _directory_entries(self, path: str) -> list[str]:
+        prefix = path.rstrip("/") + "/"
+        entries: set[str] = set()
+        for file_path in self.files:
+            if not file_path.startswith(prefix):
+                continue
+            remainder = file_path[len(prefix):]
+            parts = remainder.split("/", 1)
+            if len(parts) == 1:
+                entries.add(parts[0])
+            else:
+                entries.add(parts[0] + "/")
+        return sorted(entries)
 
 
-def _assert_common_headers(headers: dict[str, str]) -> None:
-    assert headers["x-memorylake-client-version"] == memorylake.__version__
-    assert headers["Authorization"] == "token"
+class _MemoryLakeRequestHandler(BaseHTTPRequestHandler):
+    server: _MemoryLakeHTTPServer  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler naming)
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw_body = self.rfile.read(content_length)
+            payload_obj = json.loads(raw_body.decode("utf-8"))
+        except (ValueError, json.JSONDecodeError):
+            self._send_json(400, {"error": "invalid json"})
+            return
+
+        if not isinstance(payload_obj, dict):
+            self._send_json(400, {"error": "invalid payload"})
+            return
+
+        payload: JsonDict = _dict_with_string_keys(payload_obj)
+
+        headers_dict: dict[str, str] = {str(key): str(value) for key, value in self.headers.items()}
+        self.server.record_request(headers_dict, payload)
+
+        memory_id_value = payload.get("memory_id")
+        if not isinstance(memory_id_value, str):
+            self._send_json(403, {"error": "unknown memory id"})
+            return
+
+        if memory_id_value != self.server.memory_id:
+            self._send_json(403, {"error": "unknown memory id"})
+            return
+
+        body_obj = payload.get("payload")
+        if not isinstance(body_obj, dict):
+            self._send_json(400, {"error": "invalid command payload"})
+            return
+
+        body: JsonDict = _dict_with_string_keys(body_obj)
+
+        command = body.get("command")
+        if not isinstance(command, str):
+            self._send_json(400, {"error": "missing command"})
+            return
+
+        status, response_body = self.server.handle_command(command, body)
+        self._send_json(status, response_body)
+
+    @override
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A003 - signature from parent
+        return
+
+    def _send_json(self, status: int, body: Any) -> None:
+        encoded = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
 
 
-def test_remote_tool_returns_plain_string(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
+@contextmanager
+def _run_test_server() -> Generator[_MemoryLakeHTTPServer, None, None]:
+    server = _MemoryLakeHTTPServer()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server.reset()
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
-    class _StringClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            self.calls.append((endpoint, json))
-            return _DummyResponse("string-response")
 
-    monkeypatch.setattr(module.httpx, "Client", _StringClient)
+@pytest.fixture()
+def memorylake_server() -> Generator[_MemoryLakeHTTPServer, None, None]:
+    with _run_test_server() as server:
+        yield server
 
+
+@pytest.fixture()
+def sync_tool(memorylake_server: _MemoryLakeHTTPServer) -> Generator[MemoryLakeMemoryTool, None, None]:
     tool = MemoryLakeMemoryTool(
-        base_url="https://api.example.com/",
-        memory_id="mem-string",
+        base_url=memorylake_server.base_url,
+        memory_id=memorylake_server.memory_id,
         headers={"Authorization": "token"},
     )
-
-    result = tool.view(
-        BetaMemoryTool20250818ViewCommand(
-            command="view",
-            path="/memories/plain.txt",
-            view_range=[1, 2],
-        ),
-    )
-    assert result == "string-response"
-
-    client: _DummyClient = tool._client  # type: ignore[assignment]
-    (_, payload) = client.calls[0]
-    assert payload["payload"]["view_range"] == [1, 2]
+    try:
+        yield tool
+    finally:
+        tool.close()
 
 
-def test_remote_tool_http_error_text_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    request = httpx.Request("POST", "https://api.example.com/public/v1/memory-tool")
-    response = httpx.Response(502, request=request, content=b"<!DOCTYPE html>")
-
-    class _HttpErrorTextClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            del endpoint, json
-            raise httpx.HTTPStatusError("fail", request=request, response=response)
-
-    monkeypatch.setattr(module.httpx, "Client", _HttpErrorTextClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-http-text")
-
-    with pytest.raises(MemoryLakeMemoryToolError) as excinfo:
-        tool.create(
-            BetaMemoryTool20250818CreateCommand(
-                command="create",
-                path="/memories/plain.txt",
-                file_text="text",
-            ),
-        )
-
-    assert "<!DOCTYPE html>" in str(excinfo.value)
-
-
-def test_remote_tool_memory_exists_request_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    class _ExistsErrorClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            if json["payload"]["command"] == "exists":
-                raise httpx.RequestError("exists-fail", request=httpx.Request("POST", "https://api.example.com"))
-            return super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "Client", _ExistsErrorClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-exists")
-
-    with pytest.raises(MemoryLakeMemoryToolError):
-        tool.memory_exists("/memories/missing.txt")
-
-
-def test_remote_tool_list_invalid_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    class _ListInvalidClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            if json["payload"]["command"] == "list":
-                self.calls.append((endpoint, json))
-                return _DummyResponse({"memories": "oops"})
-            return super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "Client", _ListInvalidClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-list-invalid")
-
-    with pytest.raises(MemoryLakeMemoryToolError):
-        tool.list_memories("/memories")
-
-
-def test_remote_tool_list_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    request = httpx.Request("POST", "https://api.example.com/public/v1/memory-tool")
-    response = httpx.Response(404, request=request, json={"error": "listfail"})
-
-    class _ListHttpErrorClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            if json["payload"]["command"] == "list":
-                raise httpx.HTTPStatusError("fail", request=request, response=response)
-            return super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "Client", _ListHttpErrorClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-list-error")
-
-    with pytest.raises(MemoryLakeMemoryToolError) as excinfo:
-        tool.list_memories("/memories")
-
-    assert "listfail" in str(excinfo.value)
-
-
-def test_remote_tool_stats_invalid_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    class _StatsInvalidClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            if json["payload"]["command"] == "stats":
-                self.calls.append((endpoint, json))
-                return _DummyResponse(["not", "mapping"])
-            return super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "Client", _StatsInvalidClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-stats-invalid")
-
-    with pytest.raises(MemoryLakeMemoryToolError):
-        tool.stats()
-
-
-def test_remote_tool_stats_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    request = httpx.Request("POST", "https://api.example.com/public/v1/memory-tool")
-    response = httpx.Response(503, request=request, json={"error": "statsfail"})
-
-    class _StatsHttpErrorClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            if json["payload"]["command"] == "stats":
-                raise httpx.HTTPStatusError("fail", request=request, response=response)
-            return super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "Client", _StatsHttpErrorClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-stats-error")
-
-    with pytest.raises(MemoryLakeMemoryToolError) as excinfo:
-        tool.stats()
-
-    assert "statsfail" in str(excinfo.value)
-
-
-def test_remote_tool_uses_version_header(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    monkeypatch.setattr(module.httpx, "Client", _DummyClient)
-
-    tool = MemoryLakeMemoryTool(
-        base_url="https://api.example.com/",
-        memory_id="mem-123",
+@pytest.fixture()
+async def async_tool(memorylake_server: _MemoryLakeHTTPServer) -> AsyncGenerator[AsyncMemoryLakeMemoryTool, None]:
+    tool = AsyncMemoryLakeMemoryTool(
+        base_url=memorylake_server.base_url,
+        memory_id=memorylake_server.memory_id,
         headers={"Authorization": "token"},
     )
+    try:
+        yield tool
+    finally:
+        await tool.close()
 
-    response = tool.create(
+
+@contextmanager
+def override_command(
+    server: _MemoryLakeHTTPServer,
+    command: str,
+    provider: OverrideCallable,
+) -> Generator[None, None, None]:
+    server.set_override(command, provider)
+    try:
+        yield
+    finally:
+        server.clear_override(command)
+
+
+def test_remote_tool_full_workflow(sync_tool: MemoryLakeMemoryTool, memorylake_server: _MemoryLakeHTTPServer) -> None:
+    create_result = sync_tool.create(
         BetaMemoryTool20250818CreateCommand(
             command="create",
             path="/memories/one.txt",
-            file_text="hello",
+            file_text="line-one\nline-two",
         ),
     )
-    assert response == "created"
+    assert create_result == "created"
 
-    replace_response = tool.str_replace(
+    view_result = sync_tool.view(
+        BetaMemoryTool20250818ViewCommand(
+            command="view",
+            path="/memories/one.txt",
+        ),
+    )
+    assert "line-one" in view_result
+
+    range_result = sync_tool.view(
+        BetaMemoryTool20250818ViewCommand(
+            command="view",
+            path="/memories/one.txt",
+            view_range=[2, 2],
+        ),
+    )
+    assert range_result.strip() == "line-two"
+
+    replace_result = sync_tool.str_replace(
         BetaMemoryTool20250818StrReplaceCommand(
             command="str_replace",
             path="/memories/one.txt",
-            old_str="hello",
-            new_str="world",
+            old_str="line-two",
+            new_str="line-three",
         ),
     )
-    assert replace_response == "replaced"
+    assert replace_result == "replaced"
 
-    insert_response = tool.insert(
+    insert_result = sync_tool.insert(
         BetaMemoryTool20250818InsertCommand(
             command="insert",
             path="/memories/one.txt",
             insert_line=1,
-            insert_text="line",
+            insert_text="line-inserted",
         ),
     )
-    assert insert_response == "inserted"
+    assert insert_result == "inserted"
 
-    delete_response = tool.delete(
-        BetaMemoryTool20250818DeleteCommand(command="delete", path="/memories/one.txt"),
+    view_after_insert = sync_tool.view(
+        BetaMemoryTool20250818ViewCommand(
+            command="view",
+            path="/memories/one.txt",
+        ),
     )
-    assert delete_response == "deleted"
+    assert view_after_insert.splitlines() == ["line-one", "line-inserted", "line-three"]
 
-    rename_response = tool.rename(
+    rename_result = sync_tool.rename(
         BetaMemoryTool20250818RenameCommand(
             command="rename",
             old_path="/memories/one.txt",
             new_path="/memories/two.txt",
         ),
     )
-    assert rename_response == "renamed"
+    assert rename_result == "renamed"
 
-    clear_response = tool.clear_all_memory()
-    assert clear_response == "cleared"
-
-    assert tool.memory_exists("/memories/one.txt") is True
-
-    listed = tool.list_memories("/memories")
-    assert listed == ["/memories/a.txt", "/memories/b/"]
-
-    stats = tool.stats()
-    assert stats == {"files": 2, "directories": 1, "bytes": 10}
-
-    client: _DummyClient = tool._client  # type: ignore[assignment]
-    assert client.base_url == "https://api.example.com"
-    _assert_common_headers(client.headers)
-
-    assert len(client.calls) >= len(_COMMAND_ORDER)
-    for entry_call, expected_command in zip(client.calls, _COMMAND_ORDER):
-        endpoint, payload = entry_call
-        assert endpoint == "/public/v1/memory-tool"
-        assert payload["payload"]["command"] == expected_command
-
-    raw_result = tool.execute_tool_payload(
-        {"command": "view", "path": "/memories/one.txt"},
-    )
-    assert raw_result == "ok"
-
-
-@pytest.mark.asyncio
-async def test_async_remote_tool_uses_version_header(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as async_module
-
-    monkeypatch.setattr(async_module.httpx, "AsyncClient", _DummyAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(
-        base_url="https://api.example.com/",
-        memory_id="mem-async",
-        headers={"Authorization": "token"},
-    )
-
-    response = await tool.view(
-        BetaMemoryTool20250818ViewCommand(
-            command="view",
-            path="/memories/two.txt",
-        ),
-    )
-    assert response == "async-view"
-
-    create_result = await tool.create(
-        BetaMemoryTool20250818CreateCommand(
-            command="create",
-            path="/memories/two.txt",
-            file_text="hello",
-        ),
-    )
-    assert create_result == "async-create"
-
-    replace_result = await tool.str_replace(
-        BetaMemoryTool20250818StrReplaceCommand(
-            command="str_replace",
-            path="/memories/two.txt",
-            old_str="hello",
-            new_str="world",
-        ),
-    )
-    assert replace_result == "async-replace"
-
-    insert_result = await tool.insert(
-        BetaMemoryTool20250818InsertCommand(
-            command="insert",
-            path="/memories/two.txt",
-            insert_line=1,
-            insert_text="line",
-        ),
-    )
-    assert insert_result == "async-insert"
-
-    delete_result = await tool.delete(
+    delete_result = sync_tool.delete(
         BetaMemoryTool20250818DeleteCommand(
             command="delete",
             path="/memories/two.txt",
         ),
     )
-    assert delete_result == "async-delete"
-
-    rename_result = await tool.rename(
-        BetaMemoryTool20250818RenameCommand(
-            command="rename",
-            old_path="/memories/two.txt",
-            new_path="/memories/three.txt",
-        ),
-    )
-    assert rename_result == "async-rename"
-
-    clear_result = await tool.clear_all_memory()
-    assert clear_result == "async-clear"
-
-    exists = await tool.memory_exists("/memories/three.txt")
-    assert exists is False
-
-    listed = await tool.list_memories("/memories")
-    assert listed == ["/memories/x.txt"]
-
-    stats = await tool.stats()
-    assert stats == {"files": 1, "directories": 0, "bytes": 5}
-
-    exec_result = await tool.execute_tool_payload(
-        {"command": "view", "path": "/memories/two.txt"},
-    )
-    assert exec_result == "async-view"
-
-    client: _DummyAsyncClient = tool._client  # type: ignore[assignment]
-    assert client.base_url == "https://api.example.com"
-    _assert_common_headers(client.headers)
-
-    assert len(client.calls) >= 2
-    endpoint, payload = client.calls[0]
-    assert endpoint == "/public/v1/memory-tool"
-    assert payload["payload"]["command"] == "view"
-    assert payload["payload"]["path"] == "/memories/two.txt"
-
-    await tool.close()
-    assert client.closed is True
-
-
-def test_remote_tool_error_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    class _ErrorClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            del endpoint, json
-            return _DummyResponse({"error": "boom"})
-
-    monkeypatch.setattr(module.httpx, "Client", _ErrorClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-err")
-
-    with pytest.raises(MemoryLakeMemoryToolError) as excinfo:
-        tool.clear_all_memory()
-
-    assert "boom" in str(excinfo.value)
-
-
-def test_remote_tool_invalid_content(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    class _InvalidClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            del endpoint, json
-            return _DummyResponse({})
-
-    monkeypatch.setattr(module.httpx, "Client", _InvalidClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-invalid")
+    assert delete_result == "deleted"
 
     with pytest.raises(MemoryLakeMemoryToolError):
-        tool.view(BetaMemoryTool20250818ViewCommand(command="view", path="/a.txt"))
-
-
-def test_remote_tool_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    request = httpx.Request("POST", "https://api.example.com/public/v1/memory-tool")
-    response = httpx.Response(500, request=request, json={"error": "server"})
-
-    class _HttpErrorClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            del endpoint, json
-            raise httpx.HTTPStatusError("fail", request=request, response=response)
-
-    monkeypatch.setattr(module.httpx, "Client", _HttpErrorClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-http")
-
-    with pytest.raises(MemoryLakeMemoryToolError) as excinfo:
-        tool.clear_all_memory()
-
-    assert "server" in str(excinfo.value)
-
-
-def test_remote_tool_request_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import memorylake_memorytool as module
-
-    class _RequestErrorClient(_DummyClient):
-        def post(self, endpoint: str, json: dict[str, Any]) -> _DummyResponse:
-            del endpoint, json
-            raise httpx.RequestError("boom", request=httpx.Request("POST", "https://api.example.com"))
-
-    monkeypatch.setattr(module.httpx, "Client", _RequestErrorClient)
-
-    tool = MemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-request")
-
-    with pytest.raises(MemoryLakeMemoryToolError):
-        tool.clear_all_memory()
-
-
-@pytest.mark.asyncio
-async def test_async_context_manager_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _DummyAsyncClient)
-
-    async with AsyncMemoryLakeMemoryTool(
-        base_url="https://api.example.com/",
-        memory_id="mem-ctx",
-        headers={"Authorization": "token"},
-    ) as tool:
-        client: _DummyAsyncClient = tool._client  # type: ignore[assignment]
-        assert client.base_url == "https://api.example.com"
-    assert client.closed is True
-
-
-@pytest.mark.asyncio
-async def test_async_close_after_enter(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _DummyAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(
-        base_url="https://api.example.com/",
-        memory_id="mem-close",
-        headers={"Authorization": "token"},
-    )
-    await tool.__aenter__()
-    client: _DummyAsyncClient = tool._client  # type: ignore[assignment]
-    await tool.close()
-    assert client.closed is True
-    await tool.close()
-
-
-@pytest.mark.asyncio
-async def test_async_view_string_response_with_range(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    class _StringAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            self.calls.append((endpoint, json))
-            return _DummyAsyncResponse("raw-async")
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _StringAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(
-        base_url="https://api.example.com/",
-        memory_id="mem-async-string",
-        headers={"Authorization": "token"},
-    )
-
-    result = await tool.view(
-        BetaMemoryTool20250818ViewCommand(
-            command="view",
-            path="/memories/range.txt",
-            view_range=[5, 10],
-        ),
-    )
-    assert result == "raw-async"
-
-    client: _StringAsyncClient = tool._client  # type: ignore[assignment]
-    (_, payload) = client.calls[0]
-    assert payload["payload"]["view_range"] == [5, 10]
-
-
-@pytest.mark.asyncio
-async def test_async_http_error_text_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    request = httpx.Request("POST", "https://api.example.com/public/v1/memory-tool")
-    response = httpx.Response(500, request=request, content=b"<error>oops</error>")
-
-    class _HttpErrorAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            del endpoint, json
-            raise httpx.HTTPStatusError("fail", request=request, response=response)
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _HttpErrorAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-http-async")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError) as excinfo:
-        await tool.create(
-            BetaMemoryTool20250818CreateCommand(
-                command="create",
-                path="/memories/range.txt",
-                file_text="data",
+        sync_tool.view(
+            BetaMemoryTool20250818ViewCommand(
+                command="view",
+                path="/memories/two.txt",
             ),
         )
 
-    assert "<error>oops</error>" in str(excinfo.value)
+    cleared = sync_tool.clear_all_memory()
+    assert cleared == "cleared"
+
+    payload_result = sync_tool.execute_tool_payload(
+        {
+            "command": "create",
+            "path": "/memories/payload.txt",
+            "file_text": "payload",
+        },
+    )
+    assert payload_result == "created"
+
+    assert len(memorylake_server.request_log) >= 1
+
+
+def test_remote_tool_uses_version_header(
+    sync_tool: MemoryLakeMemoryTool,
+    memorylake_server: _MemoryLakeHTTPServer,
+) -> None:
+    sync_tool.create(
+        BetaMemoryTool20250818CreateCommand(
+            command="create",
+            path="/memories/header.txt",
+            file_text="body",
+        ),
+    )
+    recorded = memorylake_server.request_log[0]
+    header_map = {key.lower(): value for key, value in recorded.headers.items()}
+    assert header_map["x-memorylake-client-version"] == memorylake.__version__
+    assert header_map["authorization"] == "token"
+
+
+def test_remote_tool_error_response(
+    sync_tool: MemoryLakeMemoryTool,
+    memorylake_server: _MemoryLakeHTTPServer,
+) -> None:
+    with override_command(
+        memorylake_server,
+        "clear_all_memory",
+        lambda payload: (200, {"error": "boom"}),
+    ):
+        with pytest.raises(MemoryLakeMemoryToolError, match="boom"):
+            sync_tool.clear_all_memory()
+
+
+def test_remote_tool_invalid_content(
+    sync_tool: MemoryLakeMemoryTool,
+    memorylake_server: _MemoryLakeHTTPServer,
+) -> None:
+    with override_command(
+        memorylake_server,
+        "view",
+        lambda payload: (200, {}),
+    ):
+        with pytest.raises(MemoryLakeMemoryToolError, match="Invalid response"):
+            sync_tool.view(
+                BetaMemoryTool20250818ViewCommand(
+                    command="view",
+                    path="/memories/missing.txt",
+                ),
+            )
+
+
+def test_remote_tool_http_error(
+    sync_tool: MemoryLakeMemoryTool,
+    memorylake_server: _MemoryLakeHTTPServer,
+) -> None:
+    with override_command(
+        memorylake_server,
+        "clear_all_memory",
+        lambda payload: (503, {"error": "server"}),
+    ):
+        with pytest.raises(MemoryLakeMemoryToolError, match="server"):
+            sync_tool.clear_all_memory()
+
+
+def test_remote_tool_request_error(monkeypatch: pytest.MonkeyPatch, sync_tool: MemoryLakeMemoryTool) -> None:
+    def _raise_request_error(*_args: object, **_kwargs: object) -> httpx.Response:
+        raise httpx.RequestError("boom", request=httpx.Request("POST", "http://example.com"))
+
+    client_any: Any = getattr(sync_tool, "_client")
+    monkeypatch.setattr(client_any, "post", _raise_request_error, raising=False)
+
+    with pytest.raises(MemoryLakeMemoryToolError, match="Request failed"):
+        sync_tool.clear_all_memory()
 
 
 @pytest.mark.asyncio
-async def test_async_memory_exists_request_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
+async def test_async_remote_tool_full_workflow(
+    async_tool: AsyncMemoryLakeMemoryTool,
+    memorylake_server: _MemoryLakeHTTPServer,
+) -> None:
+    del memorylake_server
+    await async_tool.create(
+        BetaMemoryTool20250818CreateCommand(
+            command="create",
+            path="/memories/async.txt",
+            file_text="hello\nworld",
+        ),
+    )
 
-    class _ExistsAsyncErrorClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            if json["payload"]["command"] == "exists":
-                raise httpx.RequestError("exists-async", request=httpx.Request("POST", "https://api.example.com"))
-            return await super().post(endpoint, json)
+    view_value = await async_tool.view(
+        BetaMemoryTool20250818ViewCommand(
+            command="view",
+            path="/memories/async.txt",
+        ),
+    )
+    assert "hello" in view_value
 
-    monkeypatch.setattr(module.httpx, "AsyncClient", _ExistsAsyncErrorClient)
+    replace_result = await async_tool.str_replace(
+        BetaMemoryTool20250818StrReplaceCommand(
+            command="str_replace",
+            path="/memories/async.txt",
+            old_str="world",
+            new_str="async",
+        ),
+    )
+    assert replace_result == "replaced"
 
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-exists-async")
+    await async_tool.insert(
+        BetaMemoryTool20250818InsertCommand(
+            command="insert",
+            path="/memories/async.txt",
+            insert_line=0,
+            insert_text="intro",
+        ),
+    )
 
-    with pytest.raises(AsyncMemoryLakeMemoryToolError):
-        await tool.memory_exists("/memories/fail.txt")
+    post_insert_view = await async_tool.view(
+        BetaMemoryTool20250818ViewCommand(
+            command="view",
+            path="/memories/async.txt",
+        ),
+    )
+    assert post_insert_view.splitlines()[0] == "intro"
 
+    await async_tool.rename(
+        BetaMemoryTool20250818RenameCommand(
+            command="rename",
+            old_path="/memories/async.txt",
+            new_path="/memories/async-renamed.txt",
+        ),
+    )
 
-@pytest.mark.asyncio
-async def test_async_list_invalid_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
+    await async_tool.delete(
+        BetaMemoryTool20250818DeleteCommand(
+            command="delete",
+            path="/memories/async-renamed.txt",
+        ),
+    )
 
-    class _ListInvalidAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            if json["payload"]["command"] == "list":
-                self.calls.append((endpoint, json))
-                return _DummyAsyncResponse({"memories": "oops"})
-            return await super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _ListInvalidAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-list-async")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError):
-        await tool.list_memories("/memories")
-
-
-@pytest.mark.asyncio
-async def test_async_list_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    request = httpx.Request("POST", "https://api.example.com/public/v1/memory-tool")
-    response = httpx.Response(400, request=request, json={"error": "async-list"})
-
-    class _ListHttpErrorAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            if json["payload"]["command"] == "list":
-                raise httpx.HTTPStatusError("fail", request=request, response=response)
-            return await super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _ListHttpErrorAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-list-http")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError) as excinfo:
-        await tool.list_memories("/memories")
-
-    assert "async-list" in str(excinfo.value)
-
-
-@pytest.mark.asyncio
-async def test_async_stats_invalid_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    class _StatsInvalidAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            if json["payload"]["command"] == "stats":
-                self.calls.append((endpoint, json))
-                return _DummyAsyncResponse("not-a-mapping")
-            return await super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _StatsInvalidAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-stats-async")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError):
-        await tool.stats()
+    await async_tool.clear_all_memory()
 
 
 @pytest.mark.asyncio
-async def test_async_stats_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    request = httpx.Request("POST", "https://api.example.com/public/v1/memory-tool")
-    response = httpx.Response(429, request=request, json={"error": "async-stats"})
-
-    class _StatsHttpErrorAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            if json["payload"]["command"] == "stats":
-                raise httpx.HTTPStatusError("fail", request=request, response=response)
-            return await super().post(endpoint, json)
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _StatsHttpErrorAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-stats-http")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError) as excinfo:
-        await tool.stats()
-
-    assert "async-stats" in str(excinfo.value)
+async def test_async_remote_tool_error(async_tool: AsyncMemoryLakeMemoryTool, memorylake_server: _MemoryLakeHTTPServer) -> None:
+    with override_command(
+        memorylake_server,
+        "clear_all_memory",
+        lambda payload: (200, {"error": "async-fail"}),
+    ):
+        with pytest.raises(AsyncMemoryLakeMemoryToolError, match="async-fail"):
+            await async_tool.clear_all_memory()
 
 
 @pytest.mark.asyncio
-async def test_async_reenter_after_close(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _DummyAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-closed")
-
-    await tool.close()
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError):
-        await tool.__aenter__()
-
-
-@pytest.mark.asyncio
-async def test_async_remote_tool_error_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    class _ErrorAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            del endpoint, json
-            return _DummyAsyncResponse({"error": "async-boom"})
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _ErrorAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-err")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError):
-        await tool.clear_all_memory()
+async def test_async_remote_tool_http_error(
+    async_tool: AsyncMemoryLakeMemoryTool,
+    memorylake_server: _MemoryLakeHTTPServer,
+) -> None:
+    with override_command(
+        memorylake_server,
+        "clear_all_memory",
+        lambda payload: (502, {"error": "bad-gateway"}),
+    ):
+        with pytest.raises(AsyncMemoryLakeMemoryToolError, match="bad-gateway"):
+            await async_tool.clear_all_memory()
 
 
 @pytest.mark.asyncio
-async def test_async_remote_tool_invalid_content(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
+async def test_async_remote_tool_request_error(
+    async_tool: AsyncMemoryLakeMemoryTool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _raise_request_error(*_args: object, **_kwargs: object) -> httpx.Response:
+        raise httpx.RequestError("async-boom", request=httpx.Request("POST", "http://example.com"))
 
-    class _InvalidAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            del endpoint, json
-            return _DummyAsyncResponse({})
+    client_any: Any = getattr(async_tool, "_client")
+    monkeypatch.setattr(client_any, "post", _raise_request_error, raising=False)
 
-    monkeypatch.setattr(module.httpx, "AsyncClient", _InvalidAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-invalid")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError):
-        await tool.view(BetaMemoryTool20250818ViewCommand(command="view", path="/a.txt"))
-
-
-@pytest.mark.asyncio
-async def test_async_remote_tool_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    request = httpx.Request("POST", "https://api.example.com/public/v1/memory-tool")
-    response = httpx.Response(404, request=request, json={"error": "missing"})
-
-    class _HttpErrorAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            del endpoint, json
-            raise httpx.HTTPStatusError("fail", request=request, response=response)
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _HttpErrorAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-http")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError) as excinfo:
-        await tool.clear_all_memory()
-
-    assert "missing" in str(excinfo.value)
-
-
-@pytest.mark.asyncio
-async def test_async_remote_tool_request_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from memorylake import async_memorylake_memorytool as module
-
-    class _RequestErrorAsyncClient(_DummyAsyncClient):
-        async def post(self, endpoint: str, json: dict[str, Any]) -> _DummyAsyncResponse:
-            del endpoint, json
-            raise httpx.RequestError("boom", request=httpx.Request("POST", "https://api.example.com"))
-
-    monkeypatch.setattr(module.httpx, "AsyncClient", _RequestErrorAsyncClient)
-
-    tool = AsyncMemoryLakeMemoryTool(base_url="https://api.example.com", memory_id="mem-request")
-
-    with pytest.raises(AsyncMemoryLakeMemoryToolError):
-        await tool.clear_all_memory()
+    with pytest.raises(AsyncMemoryLakeMemoryToolError, match="Request failed"):
+        await async_tool.clear_all_memory()

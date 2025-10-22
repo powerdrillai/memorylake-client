@@ -21,7 +21,12 @@ coverage.xml
 .coverage.*
 .run
 
-
+# Ignore environment variables and secrets
+.env
+.env.local
+.env.*.local
+*.secret
+*.key
 
 # Ignore logs
 .serena/

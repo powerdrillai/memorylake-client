@@ -142,12 +142,23 @@ class MemoryTool(BetaAbstractMemoryTool):
             raise MemoryToolOperationError(f"file not found: {command.path}")
 
         lines = target.read_text(encoding="utf-8").splitlines()
-        if command.insert_line < 0 or command.insert_line > len(lines):
+        line_count = len(lines)
+        min_allowed = 0
+        if command.insert_line < min_allowed or command.insert_line > line_count:
             raise MemoryToolOperationError(
-                f"insert_line must be between 0 and {len(lines)}, got {command.insert_line}"
+                f"insert_line must be between {min_allowed} and {line_count}, got {command.insert_line}"
             )
 
-        lines.insert(command.insert_line, command.insert_text.rstrip("\n"))
+        if command.insert_line == 0:
+            # Allow callers to insert before the first line by passing 0.
+            insert_index = 0
+        elif command.insert_line >= line_count:
+            insert_index = line_count
+        else:
+            # Insert after the requested 1-based line number.
+            insert_index = command.insert_line
+
+        lines.insert(insert_index, command.insert_text.rstrip("\n"))
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return f"Line inserted in {command.path}"
 

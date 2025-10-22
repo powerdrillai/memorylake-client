@@ -16,27 +16,25 @@ from anthropic.types.beta import (
 from pydantic import TypeAdapter
 
 try:
-    from memorylake import MemoryLakeMemoryTool, MemoryLakeMemoryToolError
+    from memorylake import (
+        MemoryLakeClient,
+        MemoryLakeMemoryTool,
+        MemoryLakeMemoryToolError,
+    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when not installed
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from memorylake import MemoryLakeMemoryTool, MemoryLakeMemoryToolError  # type: ignore
+    from memorylake import (  # type: ignore
+        MemoryLakeClient,
+        MemoryLakeMemoryTool,
+        MemoryLakeMemoryToolError,
+    )
 
 # Claude memory tool requires the context management beta header (2025-06-27).
 _BETA_FEATURES = ["context-management-2025-06-27"]
 _COMMAND_ADAPTER = TypeAdapter(BetaMemoryTool20250818Command)
-
-os.environ["ANTHROPIC_API_KEY"] = "DUMMY"
-
-os.environ["ANTHROPIC_MODEL"] = "claude-sonnet-4-5-20250929"
-
-os.environ["ANTHROPIC_BASE_URL"] = "http://107.155.48.191:8000/anthropic"
-
-os.environ["MEMORYLAKE_BASE_URL"] = "http://117.50.226.120:9180"
-
-os.environ["MEMORYLAKE_MEMORY_ID"] = "mem-fd8b66ec086d4e9b9082f85eb7219dde"
 
 
 def run_chat(
@@ -59,10 +57,11 @@ def run_chat(
         verbose: If True, print full raw responses and tool use details
     """
     client = Anthropic(api_key=api_key, base_url=anthropic_base_url)
-    memory_tool = MemoryLakeMemoryTool(
+    memory_client = MemoryLakeClient.from_remote(
         base_url=memorylake_base_url,
         memory_id=memory_id,
     )
+    memory_tool = memory_client.create_sync_tool()
 
     messages: List[BetaMessageParam] = []
     local_menu: Dict[str, str] = {
@@ -73,10 +72,7 @@ def run_chat(
         "memory-replace": "Replace text",
         "memory-delete": "Delete path",
         "memory-rename": "Rename path",
-        "memory-exists": "Check existence",
-        "memory-list": "List directory",
         "memory-clear": "Clear all memories",
-        "memory-stats": "View stats",
         "memory-exec": "Execute raw tool command",
     }
 
@@ -289,18 +285,6 @@ def _handle_local_command(
             )
             result = memory_tool.execute(rename_cmd)
             print(result)
-        elif name == "memory-exists":
-            path = args[0] if args else _prompt("Path")
-            exists = memory_tool.memory_exists(path)
-            print("Exists" if exists else "Does not exist")
-        elif name == "memory-list":
-            path = args[0] if args else "/memories"
-            entries = memory_tool.list_memories(path)
-            if not entries:
-                print("(empty)")
-            else:
-                for item in entries:
-                    print(item)
         elif name == "memory-clear":
             confirm = _prompt("Are you sure you want to clear all memories? (yes/no)")
             if confirm.lower() == "yes":
@@ -308,9 +292,6 @@ def _handle_local_command(
                 print(result)
             else:
                 print("Cancelled")
-        elif name == "memory-stats":
-            for key, value in memory_tool.stats().items():
-                print(f"{key}: {value}")
         elif name == "memory-exec":
             _run_exec_command(memory_tool, args)
         else:
