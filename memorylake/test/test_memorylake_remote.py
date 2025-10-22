@@ -122,7 +122,7 @@ class _MemoryLakeHTTPServer(ThreadingHTTPServer):
 
     def _view(self, payload: JsonDict) -> dict[str, str]:
         path = str(payload["path"])
-        view_range: object | None = payload.get("view_range")
+        view_range: Optional[object] = payload.get("view_range")
 
         with self._lock:
             if path.endswith("/"):
