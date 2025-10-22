@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import PurePosixPath
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional, cast
 
 import httpx
 import pytest
@@ -77,7 +77,7 @@ class _MemoryLakeHTTPServer(ThreadingHTTPServer):
         with self._lock:
             self.response_overrides[command] = provider
 
-    def get_override(self, command: str) -> OverrideCallable | None:
+    def get_override(self, command: str) -> Optional[OverrideCallable]:
         with self._lock:
             return self.response_overrides.get(command)
 
@@ -122,7 +122,7 @@ class _MemoryLakeHTTPServer(ThreadingHTTPServer):
 
     def _view(self, payload: JsonDict) -> dict[str, str]:
         path = str(payload["path"])
-        view_range = payload.get("view_range")
+        view_range: object | None = payload.get("view_range")
 
         with self._lock:
             if path.endswith("/"):
@@ -135,13 +135,15 @@ class _MemoryLakeHTTPServer(ThreadingHTTPServer):
         if text is None:
             return {"error": f"path not found: {path}"}
 
-        lines = text.splitlines()
+        lines: list[str] = list(text.splitlines())
         if isinstance(view_range, list) and len(view_range) == 2:
-            start_candidate, end_candidate = view_range
-            if isinstance(start_candidate, int) and isinstance(end_candidate, int):
-                start = max(start_candidate - 1, 0)
-                end = len(lines) if end_candidate == -1 else max(end_candidate, start + 1)
-                lines = lines[start:end]
+            range_list = cast(list[object], view_range)
+            first_candidate: object = range_list[0]
+            second_candidate: object = range_list[1]
+            if isinstance(first_candidate, int) and isinstance(second_candidate, int):
+                start_index = max(first_candidate - 1, 0)
+                end_index = len(lines) if second_candidate == -1 else max(second_candidate, start_index + 1)
+                lines = lines[start_index:end_index]
         content = "\n".join(lines)
         return {"content": content}
 
@@ -280,7 +282,7 @@ class _MemoryLakeRequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid payload"})
             return
 
-        payload: JsonDict = _dict_with_string_keys(payload_obj)
+        payload: JsonDict = _dict_with_string_keys(cast(Mapping[object, object], payload_obj))
 
         headers_dict: dict[str, str] = {str(key): str(value) for key, value in self.headers.items()}
         self.server.record_request(headers_dict, payload)
@@ -299,7 +301,7 @@ class _MemoryLakeRequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid command payload"})
             return
 
-        body: JsonDict = _dict_with_string_keys(body_obj)
+        body: JsonDict = _dict_with_string_keys(cast(Mapping[object, object], body_obj))
 
         command = body.get("command")
         if not isinstance(command, str):

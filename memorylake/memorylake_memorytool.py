@@ -13,7 +13,7 @@ responses as the local filesystem-based implementation.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import httpx
 from anthropic.lib.tools import BetaAbstractMemoryTool
@@ -114,7 +114,8 @@ class MemoryLakeMemoryTool(BetaAbstractMemoryTool):
             result_obj: object = response.json()
 
             if isinstance(result_obj, dict):
-                result_dict = _dict_with_string_keys(result_obj)
+                raw_dict = cast(dict[object, object], result_obj)
+                result_dict = _dict_with_string_keys(raw_dict)
                 error_value = result_dict.get("error")
                 if error_value is not None:
                     raise MemoryLakeMemoryToolError(str(error_value))
@@ -134,16 +135,16 @@ class MemoryLakeMemoryTool(BetaAbstractMemoryTool):
             try:
                 error_json: object = exc.response.json()
                 if isinstance(error_json, dict):
-                    dict_body = _dict_with_string_keys(error_json)
+                    dict_body = _dict_with_string_keys(cast(dict[object, object], error_json))
                     error_value = dict_body.get("error") or dict_body.get("detail")
                     if error_value is not None:
                         error_detail = str(error_value)
                 elif isinstance(error_json, list):
-                    list_body: list[object] = list(error_json)
+                    list_body = cast(list[object], error_json)
                     if list_body:
                         first_entry = list_body[0]
                         if isinstance(first_entry, dict):
-                            first_dict = _dict_with_string_keys(first_entry)
+                            first_dict = _dict_with_string_keys(cast(dict[object, object], first_entry))
                             detail_value = first_dict.get("detail") or first_dict.get("msg")
                             if detail_value is not None:
                                 error_detail = str(detail_value)

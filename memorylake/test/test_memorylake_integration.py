@@ -27,7 +27,7 @@ import asyncio
 import os
 import time
 from collections.abc import Awaitable, Callable, Generator
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 import pytest
 from anthropic.types.beta import (
@@ -48,7 +48,7 @@ from memorylake.memorylake_memorytool import MemoryLakeMemoryTool, MemoryLakeMem
 _T = TypeVar("_T")
 
 
-def _get_server_config() -> tuple[str, str] | None:
+def _get_server_config() -> Optional[tuple[str, str]]:
     """
     Get server configuration from environment variables.
 
@@ -70,7 +70,7 @@ def _retry_sync_operation(
 ) -> _T:
     """Retry a synchronous remote operation when the server reports missing resources."""
 
-    last_error: MemoryLakeMemoryToolError | None = None
+    last_error: Optional[MemoryLakeMemoryToolError] = None
     for attempt in range(retries):
         try:
             return operation()
@@ -92,7 +92,7 @@ async def _retry_async_operation(
 ) -> _T:
     """Retry an asynchronous remote operation under the same conditions as its sync counterpart."""
 
-    last_error: AsyncMemoryLakeMemoryToolError | None = None
+    last_error: Optional[AsyncMemoryLakeMemoryToolError] = None
     for attempt in range(retries):
         try:
             return await operation()

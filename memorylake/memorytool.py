@@ -22,7 +22,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Final, Union
 
 from anthropic.lib.tools import BetaAbstractMemoryTool
 from anthropic.types.beta import (
@@ -61,7 +61,7 @@ class MemoryTool(BetaAbstractMemoryTool):
         BetaMemoryTool20250818Command
     )
 
-    def __init__(self, base_path: str | Path = "./memory") -> None:
+    def __init__(self, base_path: Union[str, Path] = "./memory") -> None:
         super().__init__()
         self._base_path: Path = Path(base_path).expanduser().resolve()
         self._memory_root: Path = self._base_path / self._MEMORY_ROOT_NAME

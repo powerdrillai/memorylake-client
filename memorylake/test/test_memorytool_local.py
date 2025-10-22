@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import sys
 import types
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-if sys.version_info < (3, 10):
-    from typing import Optional as _Optional
+from example import chat as chat_example
+from memorylake.memorytool import (
+    MemoryTool,
+    MemoryToolOperationError,
+    MemoryToolPathError,
+)
 
-    MaybeStr = _Optional[str]
-    MaybeInt = _Optional[int]
-    MaybeRange = _Optional[list[int]]
-else:
-    MaybeStr = str | None
-    MaybeInt = int | None
-    MaybeRange = list[int] | None
+MaybeStr = Optional[str]
+MaybeInt = Optional[int]
+MaybeRange = Optional[list[int]]
 
 if "anthropic" not in sys.modules:
     anthropic_module = types.ModuleType("anthropic")
@@ -120,13 +120,6 @@ if "anthropic" not in sys.modules:
     anthropic_types_beta_any.BetaMemoryTool20250818StrReplaceCommand = BetaMemoryTool20250818StrReplaceCommand
     anthropic_types_beta_any.BetaMemoryTool20250818ViewCommand = BetaMemoryTool20250818ViewCommand
 
-
-from example import chat as chat_example
-from memorylake.memorytool import (
-    MemoryTool,
-    MemoryToolOperationError,
-    MemoryToolPathError,
-)
 
 handle_local_command = getattr(chat_example, "_handle_local_command")
 run_exec_command = getattr(chat_example, "_run_exec_command")
