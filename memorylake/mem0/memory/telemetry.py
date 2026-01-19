@@ -1,0 +1,3 @@
+
+def capture_client_event(event_name, instance, additional_data=None):
+    ...

@@ -17,3 +17,6 @@ coverage.xml
 .coverage
 .coverage.*
 .run
+
+# Ignore dist files
+dist/
