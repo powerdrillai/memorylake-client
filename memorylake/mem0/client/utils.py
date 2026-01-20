@@ -1,6 +1,11 @@
 import json
 import logging
+from functools import wraps
+from typing import TYPE_CHECKING, Any, Callable
+
 import httpx
+from typeguard import TypeCheckError as TypeCheckError
+from typeguard import check_type as typeguard_check_type
 
 from memorylake.mem0.exceptions import (
     NetworkError,
@@ -8,6 +13,25 @@ from memorylake.mem0.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+if TYPE_CHECKING:
+    # When type-checking, `safe_cast` is just an alias to `cast`
+    from typing import cast as cast
+    safe_cast = cast
+else:
+    # When not type-checking, `safe_cast` is a function that actually performs runtime type checking
+    def safe_cast(typ: Any, value: object) -> Any:
+        """
+        Safely cast a value to the given type - if the cast fails, an TypeCheckError is raised.
+
+        This replaces `typing.cast`, which does not perform any runtime checks.
+        """
+        try:
+            return typeguard_check_type(value, typ)
+        except TypeCheckError:
+            # Here, the type checking failed
+            raise
 
 
 class APIError(Exception):
@@ -20,7 +44,7 @@ class APIError(Exception):
     pass
 
 
-def api_error_handler(func):
+def api_error_handler(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to handle API errors consistently.
 
     This decorator catches HTTP and request errors and converts them to
@@ -30,19 +54,17 @@ def api_error_handler(func):
     the most specific exception type with helpful error messages, suggestions,
     and debug information.
     """
-    from functools import wraps
-
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return func(*args, **kwargs)
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error occurred: {e}")
 
             # Extract error details from response
-            response_text = ""
-            error_details = {}
-            debug_info = {
+            response_text: str = ""
+            error_details: dict[str, Any] = {}
+            debug_info: dict[str, Any] = {
                 "status_code": e.response.status_code,
                 "url": str(e.request.url),
                 "method": e.request.method,
@@ -54,8 +76,8 @@ def api_error_handler(func):
                 if e.response.headers.get("content-type", "").startswith("application/json"):
                     error_data = json.loads(response_text)
                     if isinstance(error_data, dict):
-                        error_details = error_data
-                        response_text = error_data.get("detail", response_text)
+                        error_details = safe_cast(dict[str, Any], error_data)
+                        response_text = error_details.get("detail", response_text)
             except (json.JSONDecodeError, AttributeError):
                 # Fallback to plain text response
                 pass

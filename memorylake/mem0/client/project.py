@@ -1,12 +1,13 @@
 import logging
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from abc import ABC
+from typing import Any, ClassVar, Optional
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from memorylake.mem0.client.utils import api_error_handler
 from memorylake.mem0.memory.telemetry import capture_client_event
+
 # Exception classes are referenced in docstrings only
 
 logger = logging.getLogger(__name__)
@@ -21,13 +22,16 @@ class ProjectConfig(BaseModel):
     project_id: Optional[str] = Field(default=None, description="Project ID")
     user_email: Optional[str] = Field(default=None, description="User email")
 
-    model_config = ConfigDict(validate_assignment=True, extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(validate_assignment=True, extra="forbid")
 
 
 class BaseProject(ABC):
     """
     Abstract base class for project management operations.
     """
+
+    _client: Any
+    config: ProjectConfig
 
     def __init__(
         self,
@@ -81,7 +85,7 @@ class BaseProject(ABC):
         if not (self.config.org_id and self.config.project_id):
             raise ValueError("org_id and project_id must be set to access project operations")
 
-    def _prepare_params(self, kwargs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _prepare_params(self, kwargs: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """
         Prepare query parameters for API requests.
 
@@ -106,7 +110,7 @@ class BaseProject(ABC):
 
         return {k: v for k, v in kwargs.items() if v is not None}
 
-    def _prepare_org_params(self, kwargs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _prepare_org_params(self, kwargs: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """
         Prepare query parameters for organization-level API requests.
 
@@ -129,172 +133,6 @@ class BaseProject(ABC):
             raise ValueError("org_id must be set for organization-level operations")
 
         return {k: v for k, v in kwargs.items() if v is not None}
-
-    @abstractmethod
-    def get(self, fields: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Get project details.
-
-        Args:
-            fields: List of fields to retrieve
-
-        Returns:
-            Dictionary containing the requested project fields.
-
-        Raises:
-            ValidationError: If the input data is invalid.
-            AuthenticationError: If authentication fails.
-            RateLimitError: If rate limits are exceeded.
-            NetworkError: If network connectivity issues occur.
-            ValueError: If org_id or project_id are not set.
-        """
-        pass
-
-    @abstractmethod
-    def create(self, name: str, description: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Create a new project within the organization.
-
-        Args:
-            name: Name of the project to be created
-            description: Optional description for the project
-
-        Returns:
-            Dictionary containing the created project details.
-
-        Raises:
-            ValidationError: If the input data is invalid.
-            AuthenticationError: If authentication fails.
-            RateLimitError: If rate limits are exceeded.
-            NetworkError: If network connectivity issues occur.
-            ValueError: If org_id is not set.
-        """
-        pass
-
-    @abstractmethod
-    def update(
-        self,
-        custom_instructions: Optional[str] = None,
-        custom_categories: Optional[List[str]] = None,
-        retrieval_criteria: Optional[List[Dict[str, Any]]] = None,
-        enable_graph: Optional[bool] = None,
-    ) -> Dict[str, Any]:
-        """
-        Update project settings.
-
-        Args:
-            custom_instructions: New instructions for the project
-            custom_categories: New categories for the project
-            retrieval_criteria: New retrieval criteria for the project
-            enable_graph: Enable or disable the graph for the project
-
-        Returns:
-            Dictionary containing the API response.
-
-        Raises:
-            ValidationError: If the input data is invalid.
-            AuthenticationError: If authentication fails.
-            RateLimitError: If rate limits are exceeded.
-            NetworkError: If network connectivity issues occur.
-            ValueError: If org_id or project_id are not set.
-        """
-        pass
-
-    @abstractmethod
-    def delete(self) -> Dict[str, Any]:
-        """
-        Delete the current project and its related data.
-
-        Returns:
-            Dictionary containing the API response.
-
-        Raises:
-            ValidationError: If the input data is invalid.
-            AuthenticationError: If authentication fails.
-            RateLimitError: If rate limits are exceeded.
-            NetworkError: If network connectivity issues occur.
-            ValueError: If org_id or project_id are not set.
-        """
-        pass
-
-    @abstractmethod
-    def get_members(self) -> Dict[str, Any]:
-        """
-        Get all members of the current project.
-
-        Returns:
-            Dictionary containing the list of project members.
-
-        Raises:
-            ValidationError: If the input data is invalid.
-            AuthenticationError: If authentication fails.
-            RateLimitError: If rate limits are exceeded.
-            NetworkError: If network connectivity issues occur.
-            ValueError: If org_id or project_id are not set.
-        """
-        pass
-
-    @abstractmethod
-    def add_member(self, email: str, role: str = "READER") -> Dict[str, Any]:
-        """
-        Add a new member to the current project.
-
-        Args:
-            email: Email address of the user to add
-            role: Role to assign ("READER" or "OWNER")
-
-        Returns:
-            Dictionary containing the API response.
-
-        Raises:
-            ValidationError: If the input data is invalid.
-            AuthenticationError: If authentication fails.
-            RateLimitError: If rate limits are exceeded.
-            NetworkError: If network connectivity issues occur.
-            ValueError: If org_id or project_id are not set.
-        """
-        pass
-
-    @abstractmethod
-    def update_member(self, email: str, role: str) -> Dict[str, Any]:
-        """
-        Update a member's role in the current project.
-
-        Args:
-            email: Email address of the user to update
-            role: New role to assign ("READER" or "OWNER")
-
-        Returns:
-            Dictionary containing the API response.
-
-        Raises:
-            ValidationError: If the input data is invalid.
-            AuthenticationError: If authentication fails.
-            RateLimitError: If rate limits are exceeded.
-            NetworkError: If network connectivity issues occur.
-            ValueError: If org_id or project_id are not set.
-        """
-        pass
-
-    @abstractmethod
-    def remove_member(self, email: str) -> Dict[str, Any]:
-        """
-        Remove a member from the current project.
-
-        Args:
-            email: Email address of the user to remove
-
-        Returns:
-            Dictionary containing the API response.
-
-        Raises:
-            ValidationError: If the input data is invalid.
-            AuthenticationError: If authentication fails.
-            RateLimitError: If rate limits are exceeded.
-            NetworkError: If network connectivity issues occur.
-            ValueError: If org_id or project_id are not set.
-        """
-        pass
 
 
 class Project(BaseProject):
@@ -324,7 +162,7 @@ class Project(BaseProject):
         self._validate_org_project()
 
     @api_error_handler
-    def get(self, fields: Optional[List[str]] = None) -> Dict[str, Any]:
+    def get(self, fields: Optional[list[str]] = None) -> dict[str, Any]:
         """
         Get project details.
 
@@ -355,7 +193,7 @@ class Project(BaseProject):
         return response.json()
 
     @api_error_handler
-    def create(self, name: str, description: Optional[str] = None) -> Dict[str, Any]:
+    def create(self, name: str, description: Optional[str] = None) -> dict[str, Any]:
         """
         Create a new project within the organization.
 
@@ -396,10 +234,10 @@ class Project(BaseProject):
     def update(
         self,
         custom_instructions: Optional[str] = None,
-        custom_categories: Optional[List[str]] = None,
-        retrieval_criteria: Optional[List[Dict[str, Any]]] = None,
+        custom_categories: Optional[list[str]] = None,
+        retrieval_criteria: Optional[list[dict[str, Any]]] = None,
         enable_graph: Optional[bool] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Update project settings.
 
@@ -427,8 +265,7 @@ class Project(BaseProject):
         ):
             raise ValueError(
                 "At least one parameter must be provided for update: "
-                "custom_instructions, custom_categories, retrieval_criteria, "
-                "enable_graph"
+                + "custom_instructions, custom_categories, retrieval_criteria, enable_graph"
             )
 
         payload = self._prepare_params(
@@ -458,7 +295,7 @@ class Project(BaseProject):
         return response.json()
 
     @api_error_handler
-    def delete(self) -> Dict[str, Any]:
+    def delete(self) -> dict[str, Any]:
         """
         Delete the current project and its related data.
 
@@ -484,7 +321,7 @@ class Project(BaseProject):
         return response.json()
 
     @api_error_handler
-    def get_members(self) -> Dict[str, Any]:
+    def get_members(self) -> dict[str, Any]:
         """
         Get all members of the current project.
 
@@ -510,7 +347,7 @@ class Project(BaseProject):
         return response.json()
 
     @api_error_handler
-    def add_member(self, email: str, role: str = "READER") -> Dict[str, Any]:
+    def add_member(self, email: str, role: str = "READER") -> dict[str, Any]:
         """
         Add a new member to the current project.
 
@@ -546,7 +383,7 @@ class Project(BaseProject):
         return response.json()
 
     @api_error_handler
-    def update_member(self, email: str, role: str) -> Dict[str, Any]:
+    def update_member(self, email: str, role: str) -> dict[str, Any]:
         """
         Update a member's role in the current project.
 
@@ -582,7 +419,7 @@ class Project(BaseProject):
         return response.json()
 
     @api_error_handler
-    def remove_member(self, email: str) -> Dict[str, Any]:
+    def remove_member(self, email: str) -> dict[str, Any]:
         """
         Remove a member from the current project.
 
@@ -641,7 +478,7 @@ class AsyncProject(BaseProject):
         self._validate_org_project()
 
     @api_error_handler
-    async def get(self, fields: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def get(self, fields: Optional[list[str]] = None) -> dict[str, Any]:
         """
         Get project details.
 
@@ -672,7 +509,7 @@ class AsyncProject(BaseProject):
         return response.json()
 
     @api_error_handler
-    async def create(self, name: str, description: Optional[str] = None) -> Dict[str, Any]:
+    async def create(self, name: str, description: Optional[str] = None) -> dict[str, Any]:
         """
         Create a new project within the organization.
 
@@ -713,10 +550,10 @@ class AsyncProject(BaseProject):
     async def update(
         self,
         custom_instructions: Optional[str] = None,
-        custom_categories: Optional[List[str]] = None,
-        retrieval_criteria: Optional[List[Dict[str, Any]]] = None,
+        custom_categories: Optional[list[str]] = None,
+        retrieval_criteria: Optional[list[dict[str, Any]]] = None,
         enable_graph: Optional[bool] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Update project settings.
 
@@ -744,8 +581,7 @@ class AsyncProject(BaseProject):
         ):
             raise ValueError(
                 "At least one parameter must be provided for update: "
-                "custom_instructions, custom_categories, retrieval_criteria, "
-                "enable_graph"
+                + "custom_instructions, custom_categories, retrieval_criteria, enable_graph"
             )
 
         payload = self._prepare_params(
@@ -775,7 +611,7 @@ class AsyncProject(BaseProject):
         return response.json()
 
     @api_error_handler
-    async def delete(self) -> Dict[str, Any]:
+    async def delete(self) -> dict[str, Any]:
         """
         Delete the current project and its related data.
 
@@ -801,7 +637,7 @@ class AsyncProject(BaseProject):
         return response.json()
 
     @api_error_handler
-    async def get_members(self) -> Dict[str, Any]:
+    async def get_members(self) -> dict[str, Any]:
         """
         Get all members of the current project.
 
@@ -827,7 +663,7 @@ class AsyncProject(BaseProject):
         return response.json()
 
     @api_error_handler
-    async def add_member(self, email: str, role: str = "READER") -> Dict[str, Any]:
+    async def add_member(self, email: str, role: str = "READER") -> dict[str, Any]:
         """
         Add a new member to the current project.
 
@@ -863,7 +699,7 @@ class AsyncProject(BaseProject):
         return response.json()
 
     @api_error_handler
-    async def update_member(self, email: str, role: str) -> Dict[str, Any]:
+    async def update_member(self, email: str, role: str) -> dict[str, Any]:
         """
         Update a member's role in the current project.
 
@@ -899,7 +735,7 @@ class AsyncProject(BaseProject):
         return response.json()
 
     @api_error_handler
-    async def remove_member(self, email: str) -> Dict[str, Any]:
+    async def remove_member(self, email: str) -> dict[str, Any]:
         """
         Remove a member from the current project.
 
