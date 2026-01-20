@@ -10,7 +10,10 @@ __pycache__/
 *.pyc
 pytest_cache/
 .DS_Store
-memorylake.egg-info/
+
+# Ignore build files, etc.
+/memorylake.egg-info/
+/dist/
 
 # Ignore coverage files
 coverage.xml

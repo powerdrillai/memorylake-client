@@ -1,0 +1,51 @@
+name: Publish to PyPI
+
+on:
+  # Trigger on tag push
+  push:
+    tags:
+      - 'v*.*.*'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+permissions:
+  id-token: write  # Required for trusted publishing
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi  # Must match the environment name in PyPI trusted publisher config
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Important: Fetch full history including tags
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: Install Dpendencies
+      run: |
+        python -c "import sys; print(sys.version)"
+        python -m pip install --upgrade pip
+        pip install .[dev]
+
+    - name: Check Package Version Consistency
+      run: |
+        ./cicd/check-package-version-consistency.py
+
+    - name: Build Package
+      run: |
+        pip install build
+        python -m build
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        verbose: true
