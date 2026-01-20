@@ -1,6 +1,8 @@
 # MemoryLake
 
 [![codecov](https://codecov.io/gh/powerdrillai/memorylake-client/branch/main/graph/badge.svg)](https://codecov.io/gh/powerdrillai/memorylake-client)
+[![versions](https://img.shields.io/pypi/pyversions/memorylake.svg)](https://github.com/powerdrillai/memorylake-client)
+[![license](https://img.shields.io/github/license/powerdrillai/memorylake-client.svg)](https://github.com/powerdrillai/memorylake-client/tree/main/LICENSE)
 
 ## Developer Setup
 

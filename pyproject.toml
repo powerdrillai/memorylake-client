@@ -197,6 +197,11 @@ reportUnnecessaryIsInstance = false
 # So we use flake8 to check unused imports, and disable this check in (based)pyright here.
 reportUnusedImport = false
 
+# Since we need to support Python 3.9 now, we disable this check.
+# We have tons of `Union` and `Optional` in the codebase, after we drop support for Python 3.9,
+# we should migrate them to `|` and `| None`, and re-enable this check.
+reportDeprecated = false
+
 # ================================================================
 # Configurations for coverage
 # ================================================================
