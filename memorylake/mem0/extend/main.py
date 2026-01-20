@@ -12,10 +12,12 @@ class MemoryLakeClient(MemoryClient):
 
     def new_reflection(
         self,
+        user_id: str,
         target_type: Literal["user", "location"],
         target_id: str,
     ) -> Reflection:
         return Reflection(
+            user_id=user_id,
             target_type=target_type,
             target_id=target_id,
             memory_client=self,
@@ -60,10 +62,12 @@ class AsyncMemoryLakeClient(AsyncMemoryClient):
 
     def new_reflection(
         self,
+        user_id: str,
         target_type: Literal["user", "location"],
         target_id: str,
     ) -> AsyncReflection:
         return AsyncReflection(
+            user_id=user_id,
             target_type=target_type,
             target_id=target_id,
             memory_client=self,
@@ -106,6 +110,7 @@ class AsyncMemoryLakeClient(AsyncMemoryClient):
 
 class Reflection:
 
+    user_id: str
     target_type: Literal["user", "location"]
     target_id: str
     memory_client: MemoryLakeClient
@@ -113,10 +118,12 @@ class Reflection:
 
     def __init__(
         self,
+        user_id: str,
         target_type: Literal["user", "location"],
         target_id: str,
         memory_client: MemoryLakeClient,
     ):
+        self.user_id = user_id
         self.target_type = target_type
         self.target_id = target_id
         self.memory_client = memory_client
@@ -124,6 +131,7 @@ class Reflection:
 
     @api_error_handler
     def recollect(self, **kwargs: Any) -> dict[str, Any]:
+        kwargs["user_id"] = self.user_id
         kwargs["metadata"] = self._prepare_metadata(kwargs.get("metadata") or {})
         payload = self.memory_client.prepare_params(kwargs)
         response = self.memory_client.client.post("/v3/memories/recollect/", json=payload)
@@ -136,10 +144,11 @@ class Reflection:
         return response.json()
 
     def save(self, messages: Any, **kwargs: Any) -> dict[str, Any]:
-        kwargs["metadata"] = self._prepare_metadata(kwargs.get("metadata") or {})
+        kwargs["user_id"] = self.user_id
+        kwargs["metadata"] = self._prepare_metadata(kwargs.get("metadata") or {}, "reflect")
         return self.memory_client.add(messages, **kwargs)
 
-    def _prepare_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_metadata(self, metadata: dict[str, Any], category: Optional[str] = None) -> dict[str, Any]:
         user_extension: dict[str, Any] = metadata.get("memorylake_extension") or {}
         metadata["memorylake_extension"] = {
             **user_extension,
@@ -150,11 +159,15 @@ class Reflection:
             },
         }
 
+        if category:
+            metadata["memorylake_extension"]["category"] = category
+
         return metadata
 
 
 class AsyncReflection:
 
+    user_id: str
     target_type: Literal["user", "location"]
     target_id: str
     memory_client: AsyncMemoryLakeClient
@@ -162,10 +175,12 @@ class AsyncReflection:
 
     def __init__(
         self,
+        user_id: str,
         target_type: Literal["user", "location"],
         target_id: str,
         memory_client: AsyncMemoryLakeClient,
     ):
+        self.user_id = user_id
         self.target_type = target_type
         self.target_id = target_id
         self.memory_client = memory_client
@@ -173,6 +188,7 @@ class AsyncReflection:
 
     @api_error_handler
     async def recollect(self, **kwargs: Any) -> dict[str, Any]:
+        kwargs["user_id"] = self.user_id
         kwargs["metadata"] = self._prepare_metadata(kwargs.get("metadata") or {})
         payload = self.memory_client.prepare_params(kwargs)
         response = await self.memory_client.async_client.post("/v3/memories/recollect/", json=payload)
@@ -185,10 +201,11 @@ class AsyncReflection:
         return response.json()
 
     async def save(self, messages: Any, **kwargs: Any) -> dict[str, Any]:
-        kwargs["metadata"] = self._prepare_metadata(kwargs.get("metadata") or {})
+        kwargs["user_id"] = self.user_id
+        kwargs["metadata"] = self._prepare_metadata(kwargs.get("metadata") or {}, "reflect")
         return await self.memory_client.add(messages, **kwargs)
 
-    def _prepare_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_metadata(self, metadata: dict[str, Any], category: Optional[str] = None) -> dict[str, Any]:
         user_extension: dict[str, Any] = metadata.get("memorylake_extension") or {}
         metadata["memorylake_extension"] = {
             **user_extension,
@@ -198,5 +215,8 @@ class AsyncReflection:
                 "target_id": self.target_id,
             },
         }
+
+        if category:
+            metadata["memorylake_extension"]["category"] = category
 
         return metadata
