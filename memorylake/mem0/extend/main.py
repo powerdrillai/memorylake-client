@@ -24,7 +24,7 @@ class MemoryLakeClient(MemoryClient):
         )
 
     @api_error_handler
-    def end_session(
+    def end_chat_session(
         self,
         chat_session_id: str,
         timestamp: int,
@@ -48,7 +48,7 @@ class MemoryLakeClient(MemoryClient):
         response = self.client.post("/v3/chat_session/event/", json=payload)
         response.raise_for_status()
         capture_client_event(
-            "client.end_session",
+            "client.end_chat_session",
             self,
             {"chat_session_id": chat_session_id, "sync_type": "sync"},
         )
@@ -74,7 +74,7 @@ class AsyncMemoryLakeClient(AsyncMemoryClient):
         )
 
     @api_error_handler
-    async def end_session(
+    async def end_chat_session(
         self,
         chat_session_id: str,
         timestamp: int,
@@ -98,7 +98,7 @@ class AsyncMemoryLakeClient(AsyncMemoryClient):
         response = await self.async_client.post("/v3/chat_session/event/", json=payload)
         response.raise_for_status()
         capture_client_event(
-            "client.end_session",
+            "client.end_chat_session",
             self,
             {"chat_session_id": chat_session_id, "sync_type": "async"},
         )
