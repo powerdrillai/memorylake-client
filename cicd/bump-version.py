@@ -30,7 +30,7 @@ def update_pyproject_version(new_version: str) -> None:
     # Use regex to replace the version line under [project]
     pattern: str = r'^(version\s*=\s*")[^"]+(")'
     match: Optional[re.Match[str]] = re.search(pattern, content, flags=re.MULTILINE)
-    
+
     if not match:
         raise ValueError("Could not find version field in pyproject.toml")
 
@@ -52,7 +52,7 @@ def update_init_version(new_version: str) -> None:
     # Use regex to replace the __version__ line
     pattern: str = r'^(__version__\s*:\s*str\s*=\s*")[^"]+(")$'
     match: Optional[re.Match[str]] = re.search(pattern, content, flags=re.MULTILINE)
-    
+
     if not match:
         raise ValueError("Could not find __version__ field in memorylake/__init__.py")
 
