@@ -1,0 +1,30 @@
+MemoryLake
+Copyright (c) 2025-2026 MemoryLake Team
+
+This product includes software developed by third parties.
+
+We would like to express our sincere gratitude to all open-source projects and
+their contributors whose work has been incorporated into MemoryLake. Their
+excellent contributions have been instrumental in accelerating our development
+and building a better product for the community.
+
+================================================================================
+
+Portions of this software are derived from mem0 (https://github.com/mem0ai/mem0)
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+The following files in this project contain code derived from mem0:
+- memorylake/mem0/**
+
+These files have been largely modified from their original versions.
