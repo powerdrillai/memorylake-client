@@ -1,6 +1,6 @@
 [project]
 name = "memorylake"
-version = "0.1.1"
+version = "0.1.2"
 description = "MemoryLake"
 authors = [
     {name = "Powerdrill Authors", email = "info@powerdrill.ai"}
